@@ -1,0 +1,62 @@
+# This config contains the default values for training Flowtron model on LJSpeech dataset.
+# If you want to train model on other dataset, you can change config values according to your dataset.
+# Most dataset-specific arguments are in the head of the config file, see below.
+
+name: Flowtron
+
+# paths to datasets
+train_dataset: ???
+validation_datasets: ???
+
+model:
+  dummy_speaker_embedding: false
+  n_flows: 2
+  n_components: 0
+  use_gate_layer: true
+  n_hidden: 640
+  n_attn_channels: 1024
+  n_lstm_layers: 2
+  use_cumm_attention: false
+  n_mel_channels: 80
+  n_speaker_dim: 128
+  n_text_dim: 512
+  
+  speakeremb:
+    n_speakers: 1
+    n_speaker_dim: ${model.n_speaker_dim}
+
+  textemb:
+    n_text: 185
+    n_text_dim: ${model.n_text_dim}
+
+  encoder:
+    _target_: nemo.collections.tts.modules.flowtron_modules.Encoder
+    encoder_n_convolutions: 3
+    encoder_embedding_dim: ${model.n_text_dim}
+    encoder_kernel_size: 5
+    norm_fn: torch.nn.InstanceNorm1d
+
+  melencoder:
+    _target_: nemo.collections.tts.modules.flowtron_modules.MelEncoder
+    encoder_n_convolutions: 2
+    encoder_embedding_dim: 512
+    encoder_kernel_size: 3
+    norm_fn: torch.nn.InstanceNorm1d
+
+  gaussianmixture:
+    _target_: nemo.collections.tts.modules.flowtron_modules.GaussianMixture
+    n_hidden: ${model.melencoder.encoder_embedding_dim}
+    n_components: ${model.n_components}
+    n_mel_channels: ${model.n_mel_channels}
+    fixed_gaussian: true
+    mean_scale: 0.0
+
+  train_ds:
+    dataset:
+      _target_: ""
+      manifest_filepath: ${train_dataset}
+  
+  validation_ds:
+    dataset:
+      _target_: ""
+      manifest_filepath: ${train_dataset}

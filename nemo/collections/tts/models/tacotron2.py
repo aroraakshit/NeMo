@@ -13,13 +13,14 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, List
 
 import torch
 from hydra.utils import instantiate
 from omegaconf import MISSING, DictConfig, OmegaConf, open_dict
 from omegaconf.errors import ConfigAttributeError
 from pytorch_lightning.loggers import LoggerCollection, TensorBoardLogger
+from pytorch_lightning import Trainer
 from torch import nn
 
 from nemo.collections.common.parts.preprocessing import parsers
