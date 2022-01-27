@@ -13,3 +13,4 @@
 # limitations under the License.
 
 import nemo.collections.tts.helpers.helpers
+import nemo.collections.tts.helpers.text

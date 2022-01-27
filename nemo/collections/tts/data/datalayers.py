@@ -39,6 +39,7 @@ import collections as py_collections
 import json
 import logging
 import math
+import re
 import os
 import pickle
 import random
@@ -54,9 +55,13 @@ import soundfile as sf
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from tqdm import tqdm
+from scipy.stats import betabinom
+from scipy.io.wavfile import read
 
 from nemo.collections.asr.parts.preprocessing.features import WaveformFeaturizer
 from nemo.collections.asr.parts.preprocessing.segment import AudioSegment
+from nemo.collections.tts.helpers.helpers import dynamic_range_compression, dynamic_range_decompression, window_sumsquare
+from nemo.collections.tts.helpers.text import text_to_sequence, cmudict, _clean_text, get_arpabet
 from nemo.collections.common.parts.preprocessing import collections, parsers
 from nemo.core.classes import Dataset
 from nemo.core.neural_types.elements import *
@@ -766,3 +771,339 @@ class FastSpeech2Dataset(Dataset):
                 energies_batched,
             )
         return (audio_signal, audio_lengths, tokens, tokens_lengths, duration_batched, None, None)
+
+def beta_binomial_prior_distribution(phoneme_count, mel_count,
+                                     scaling_factor=1.0):
+    P, M = phoneme_count, mel_count
+    x = np.arange(0, P)
+    mel_text_probs = []
+    for i in range(1, M+1):
+        a, b = scaling_factor*i, scaling_factor*(M+1-i)
+        rv = betabinom(P, a, b)
+        mel_i_prob = rv.pmf(x)
+        mel_text_probs.append(mel_i_prob)
+    return torch.tensor(np.array(mel_text_probs))
+
+
+def load_filepaths_and_text(filelist, split="|"):
+    if isinstance(filelist, str):
+        with open(filelist, encoding='utf-8') as f:
+            filepaths_and_text = [line.strip().split(split) for line in f]
+    else:
+        filepaths_and_text = filelist
+    return filepaths_and_text
+
+
+def load_wav_to_torch(full_path):
+    """ Loads wavdata into torch array """
+    sampling_rate, data = read(full_path)
+    return torch.from_numpy(data).float(), sampling_rate
+
+
+class TacotronSTFT(torch.nn.Module):
+    def __init__(self, filter_length=1024, hop_length=256, win_length=1024,
+                 n_mel_channels=80, sampling_rate=22050, mel_fmin=0.0,
+                 mel_fmax=None):
+        super(TacotronSTFT, self).__init__()
+        self.n_mel_channels = n_mel_channels
+        self.sampling_rate = sampling_rate
+        self.stft_fn = STFT(filter_length, hop_length, win_length)
+        mel_basis = librosa_mel_fn(
+            sampling_rate, filter_length, n_mel_channels, mel_fmin, mel_fmax)
+        mel_basis = torch.from_numpy(mel_basis).float()
+        self.register_buffer('mel_basis', mel_basis)
+
+    def spectral_normalize(self, magnitudes):
+        output = dynamic_range_compression(magnitudes)
+        return output
+
+    def spectral_de_normalize(self, magnitudes):
+        output = dynamic_range_decompression(magnitudes)
+        return output
+
+    def mel_spectrogram(self, y):
+        """Computes mel-spectrograms from a batch of waves
+        PARAMS
+        ------
+        y: Variable(torch.FloatTensor) with shape (B, T) in range [-1, 1]
+
+        RETURNS
+        -------
+        mel_output: torch.FloatTensor of shape (B, n_mel_channels, T)
+        """
+        assert(torch.min(y.data) >= -1)
+        assert(torch.max(y.data) <= 1)
+
+        magnitudes, phases = self.stft_fn.transform(y)
+        magnitudes = magnitudes.data
+        mel_output = torch.matmul(self.mel_basis, magnitudes)
+        mel_output = self.spectral_normalize(mel_output)
+        return mel_output
+
+"""
+BSD 3-Clause License
+
+Copyright (c) 2017, Prem Seetharaman
+All rights reserved.
+
+* Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice,
+  this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice, this
+  list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+import torch.nn.functional as F
+from torch.autograd import Variable
+from scipy.signal import get_window
+from librosa.util import pad_center, tiny
+
+class STFT(torch.nn.Module):
+    """adapted from Prem Seetharaman's https://github.com/pseeth/pytorch-stft"""
+    def __init__(self, filter_length=800, hop_length=200, win_length=800,
+                 window='hann'):
+        super(STFT, self).__init__()
+        self.filter_length = filter_length
+        self.hop_length = hop_length
+        self.win_length = win_length
+        self.window = window
+        self.forward_transform = None
+        scale = self.filter_length / self.hop_length
+        fourier_basis = np.fft.fft(np.eye(self.filter_length))
+
+        cutoff = int((self.filter_length / 2 + 1))
+        fourier_basis = np.vstack([np.real(fourier_basis[:cutoff, :]),
+                                   np.imag(fourier_basis[:cutoff, :])])
+
+        forward_basis = torch.FloatTensor(fourier_basis[:, None, :])
+        inverse_basis = torch.FloatTensor(
+            np.linalg.pinv(scale * fourier_basis).T[:, None, :])
+
+        if window is not None:
+            assert(filter_length >= win_length)
+            # get window and zero center pad it to filter_length
+            fft_window = get_window(window, win_length, fftbins=True)
+            fft_window = pad_center(fft_window, filter_length)
+            fft_window = torch.from_numpy(fft_window).float()
+
+            # window the bases
+            forward_basis *= fft_window
+            inverse_basis *= fft_window
+
+        self.register_buffer('forward_basis', forward_basis.float())
+        self.register_buffer('inverse_basis', inverse_basis.float())
+
+    def transform(self, input_data):
+        num_batches = input_data.size(0)
+        num_samples = input_data.size(1)
+
+        self.num_samples = num_samples
+
+        # similar to librosa, reflect-pad the input
+        input_data = input_data.view(num_batches, 1, num_samples)
+        input_data = F.pad(
+            input_data.unsqueeze(1),
+            (int(self.filter_length / 2), int(self.filter_length / 2), 0, 0),
+            mode='reflect')
+        input_data = input_data.squeeze(1)
+
+        forward_transform = F.conv1d(
+            input_data,
+            Variable(self.forward_basis, requires_grad=False),
+            stride=self.hop_length,
+            padding=0)
+
+        cutoff = int((self.filter_length / 2) + 1)
+        real_part = forward_transform[:, :cutoff, :]
+        imag_part = forward_transform[:, cutoff:, :]
+
+        magnitude = torch.sqrt(real_part**2 + imag_part**2)
+        phase = torch.autograd.Variable(
+            torch.atan2(imag_part.data, real_part.data))
+
+        return magnitude, phase
+
+    def inverse(self, magnitude, phase):
+        recombine_magnitude_phase = torch.cat(
+            [magnitude*torch.cos(phase), magnitude*torch.sin(phase)], dim=1)
+
+        inverse_transform = F.conv_transpose1d(
+            recombine_magnitude_phase,
+            Variable(self.inverse_basis, requires_grad=False),
+            stride=self.hop_length,
+            padding=0)
+
+        if self.window is not None:
+            window_sum = window_sumsquare(
+                self.window, magnitude.size(-1), hop_length=self.hop_length,
+                win_length=self.win_length, n_fft=self.filter_length,
+                dtype=np.float32)
+            # remove modulation effects
+            approx_nonzero_indices = torch.from_numpy(
+                np.where(window_sum > tiny(window_sum))[0])
+            window_sum = torch.autograd.Variable(
+                torch.from_numpy(window_sum), requires_grad=False)
+            inverse_transform[:, :, approx_nonzero_indices] /= window_sum[approx_nonzero_indices]
+
+            # scale by hop ratio
+            inverse_transform *= float(self.filter_length) / self.hop_length
+
+        inverse_transform = inverse_transform[:, :, int(self.filter_length/2):]
+        inverse_transform = inverse_transform[:, :, :-int(self.filter_length/2):]
+
+        return inverse_transform
+
+    def forward(self, input_data):
+        self.magnitude, self.phase = self.transform(input_data)
+        reconstruction = self.inverse(self.magnitude, self.phase)
+        return reconstruction
+
+
+class FlowtronData(torch.utils.data.Dataset):
+    def __init__(self, filelist_path, filter_length, hop_length, win_length,
+                 sampling_rate, mel_fmin, mel_fmax, max_wav_value, p_arpabet,
+                 cmudict_path, text_cleaners, speaker_ids=None,
+                 use_attn_prior=False, attn_prior_threshold=1e-4,
+                 prior_cache_path="", betab_scaling_factor=1.0, randomize=True,
+                 keep_ambiguous=False, seed=1234):
+        self.max_wav_value = max_wav_value
+        self.audiopaths_and_text = load_filepaths_and_text(filelist_path)
+        self.use_attn_prior = use_attn_prior
+        self.betab_scaling_factor = betab_scaling_factor
+        self.attn_prior_threshold = attn_prior_threshold
+        self.keep_ambiguous = keep_ambiguous
+
+        if speaker_ids is None or speaker_ids == '':
+            self.speaker_ids = self.create_speaker_lookup_table(
+                self.audiopaths_and_text)
+        else:
+            self.speaker_ids = speaker_ids
+
+        self.stft = TacotronSTFT(filter_length=filter_length,
+                                 hop_length=hop_length,
+                                 win_length=win_length,
+                                 sampling_rate=sampling_rate,
+                                 mel_fmin=mel_fmin, mel_fmax=mel_fmax)
+        self.sampling_rate = sampling_rate
+        self.text_cleaners = text_cleaners
+        self.p_arpabet = p_arpabet
+        self.cmudict = cmudict.CMUDict(
+            cmudict_path, keep_ambiguous=keep_ambiguous)
+        if speaker_ids is None:
+            self.speaker_ids = self.create_speaker_lookup_table(
+                self.audiopaths_and_text)
+        else:
+            self.speaker_ids = speaker_ids
+
+        # caching makes sense for p_phoneme=1.0
+        # for other values, everytime text lengths will change
+        self.prior_cache_path = prior_cache_path
+        self.caching_enabled = False
+        if (self.prior_cache_path is not None and
+                self.prior_cache_path != "" and p_arpabet == 1.0):
+            self.caching_enabled = True
+        # make sure caching path exists
+        if (self.caching_enabled and
+                not os.path.exists(self.prior_cache_path)):
+            os.makedirs(self.prior_cache_path)
+
+        random.seed(seed)
+        if randomize:
+            random.shuffle(self.audiopaths_and_text)
+
+    def compute_attention_prior(self, audiopath, mel_length, text_length):
+        folder_path = audiopath.split('/')[-2]
+        filename = os.path.basename(audiopath).split('.')[0]
+        prior_path = os.path.join(
+            self.prior_cache_path,
+            folder_path + "_" + filename)
+
+        prior_path += "_prior.pth"
+
+        prior_loaded = False
+        if self.caching_enabled and os.path.exists(prior_path):
+            attn_prior = torch.load(prior_path)
+            if (attn_prior.shape[1] == text_length and
+                    attn_prior.shape[0] == mel_length):
+                prior_loaded = True
+            else:
+                print("Prior size mismatch, recomputing")
+
+        if not prior_loaded:
+            attn_prior = beta_binomial_prior_distribution(
+                                            text_length,
+                                            mel_length,
+                                            self.betab_scaling_factor)
+            if self.caching_enabled:
+                torch.save(attn_prior, prior_path)
+
+        if self.attn_prior_threshold > 0:
+            attn_prior = attn_prior.masked_fill(
+                attn_prior < self.attn_prior_threshold, 0.0)
+
+        return attn_prior
+
+    def create_speaker_lookup_table(self, audiopaths_and_text):
+        speaker_ids = np.sort(np.unique([x[2] for x in audiopaths_and_text]))
+        d = {int(speaker_ids[i]): i for i in range(len(speaker_ids))}
+        print("Number of speakers :", len(d))
+        return d
+
+    def get_mel(self, audio):
+        audio_norm = audio / self.max_wav_value
+        audio_norm = audio_norm.unsqueeze(0)
+        audio_norm = torch.autograd.Variable(audio_norm, requires_grad=False)
+        melspec = self.stft.mel_spectrogram(audio_norm)
+        melspec = torch.squeeze(melspec, 0)
+        return melspec
+
+    def get_speaker_id(self, speaker_id):
+        return torch.LongTensor([self.speaker_ids[int(speaker_id)]])
+
+    def get_text(self, text):
+        text = _clean_text(text, self.text_cleaners)
+        words = re.findall(r'\S*\{.*?\}\S*|\S+', text)
+        text = ' '.join([get_arpabet(word, self.cmudict)
+                         if random.random() < self.p_arpabet else word
+                         for word in words])
+        text_norm = torch.LongTensor(text_to_sequence(text))
+        return text_norm
+
+    def __getitem__(self, index):
+        # Read audio and text
+        audiopath, text, speaker_id = self.audiopaths_and_text[index]
+        audio, sampling_rate = load_wav_to_torch(audiopath)
+        if sampling_rate != self.sampling_rate:
+            raise ValueError("{} SR doesn't match target {} SR".format(
+                sampling_rate, self.sampling_rate))
+
+        mel = self.get_mel(audio)
+        text_encoded = self.get_text(text)
+        speaker_id = self.get_speaker_id(speaker_id)
+        attn_prior = None
+        if self.use_attn_prior:
+            attn_prior = self.compute_attention_prior(
+                audiopath, mel.shape[1], text_encoded.shape[0])
+
+        return (mel, speaker_id, text_encoded, attn_prior)
+
+    def __len__(self):
+        return len(self.audiopaths_and_text)

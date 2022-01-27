@@ -3,6 +3,7 @@ from collections.abc import Callable
 import numpy as np
 import torch
 from torch.nn import functional as F
+from librosa.filters import mel as librosa_mel_fn
 
 from nemo.collections.tts.modules.submodules import ConvNorm, LinearNorm
 from nemo.core.classes import NeuralModule, typecheck
@@ -679,4 +680,3 @@ class ARBackStep(NeuralModule):
 
         residual = torch.flip(residual, (0, ))
         return residual, attention_weights
-

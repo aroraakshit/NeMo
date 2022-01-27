@@ -11,7 +11,8 @@ from torch import nn
 
 from nemo.collections.tts.helpers.helpers import get_mask_from_lengths
 from nemo.collections.tts.models.base import SpectrogramGenerator
-from nemo.collections.tts.modules.flowtron_modules import ARStep, ARBackStep
+from nemo.core.classes.common import PretrainedModelInfo
+from nemo.collections.tts.modules.flowtron_submodules import ARStep, ARBackStep
 from nemo.core.classes.common import typecheck
 
 @dataclass
@@ -186,3 +187,18 @@ class FlowtronModel(SpectrogramGenerator):
         flow.attention_layer.temperature = temperature
         if hasattr(flow, 'gate_layer'):
             flow.gate_threshold = gate_threshold
+
+    @classmethod
+    def list_available_models(cls) -> PretrainedModelInfo:
+        #TODO
+        return None
+    
+    def setup_training_data(self, train_data_config: OmegaConf):
+        self._train_dl = None
+  
+    def setup_validation_data(self, val_data_config: OmegaConf):
+        self._validation_dl = None
+  
+    def setup_test_data(self, test_data_config: OmegaConf):
+        self._test_dl = None
+    
