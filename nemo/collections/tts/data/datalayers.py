@@ -977,8 +977,8 @@ class STFT(torch.nn.Module):
         return reconstruction
 
 
-class FlowtronData(torch.utils.data.Dataset):
-    def __init__(self, filelist_path, filter_length, hop_length, win_length,
+class FlowtronData(Dataset):
+    def __init__(self, manifest_filepath, filter_length, hop_length, win_length,
                  sampling_rate, mel_fmin, mel_fmax, max_wav_value, p_arpabet,
                  cmudict_path, text_cleaners, speaker_ids=None,
                  use_attn_prior=False, attn_prior_threshold=1e-4,
@@ -1107,3 +1107,61 @@ class FlowtronData(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.audiopaths_and_text)
+
+
+class FlowtronDataCollate():
+    """ Zero-pads model inputs and targets based on number of frames per step """
+    def __init__(self, n_frames_per_step=1, use_attn_prior=False):
+        self.n_frames_per_step = n_frames_per_step
+        self.use_attn_prior = use_attn_prior
+
+    def __call__(self, batch):
+        """Collate's training batch from normalized text and mel-spectrogram """
+        # Right zero-pad all one-hot text sequences to max input length
+        input_lengths, ids_sorted_decreasing = torch.sort(
+            torch.LongTensor([len(x[2]) for x in batch]),
+            dim=0, descending=True)
+        max_input_len = input_lengths[0].item()
+
+        text_padded = torch.LongTensor(len(batch), max_input_len)
+        text_padded.zero_()
+        for i in range(len(ids_sorted_decreasing)):
+            text = batch[ids_sorted_decreasing[i]][2]
+            text_padded[i, :text.size(0)] = text
+
+        # Right zero-pad mel-spec
+        num_mel_channels = batch[0][0].size(0)
+        max_target_len = max([x[0].size(1) for x in batch])
+        if max_target_len % self.n_frames_per_step != 0:
+            max_target_len += self.n_frames_per_step - max_target_len % self.n_frames_per_step
+            assert max_target_len % self.n_frames_per_step == 0
+
+        # include mel padded, gate padded and speaker ids
+        mel_padded = torch.FloatTensor(
+                len(batch), num_mel_channels, max_target_len)
+        mel_padded.zero_()
+        gate_padded = torch.FloatTensor(len(batch), max_target_len)
+        gate_padded.zero_()
+        output_lengths = torch.LongTensor(len(batch))
+
+        attn_prior_padded = None
+        if self.use_attn_prior:
+            attn_prior_padded = torch.FloatTensor(
+                len(batch), max_target_len, max_input_len)
+            attn_prior_padded.zero_()
+        speaker_ids = torch.LongTensor(len(batch))
+        for i in range(len(ids_sorted_decreasing)):
+            mel = batch[ids_sorted_decreasing[i]][0]
+            mel_padded[i, :, :mel.size(1)] = mel
+            gate_padded[i, mel.size(1)-1:] = 1
+            output_lengths[i] = mel.size(1)
+            speaker_ids[i] = batch[ids_sorted_decreasing[i]][1]
+            if self.use_attn_prior:
+                cur_attn_prior = batch[ids_sorted_decreasing[i]][3]
+                attn_prior_padded[
+                    i,
+                    :cur_attn_prior.size(0),
+                    :cur_attn_prior.size(1)] = cur_attn_prior
+
+        return (mel_padded, speaker_ids, text_padded, input_lengths,
+                output_lengths, gate_padded, attn_prior_padded)

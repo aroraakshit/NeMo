@@ -6,7 +6,7 @@ name: Flowtron
 
 # paths to datasets
 train_dataset: ???
-validation_datasets: ???
+validation_dataset: ???
 
 model:
   dummy_speaker_embedding: false
@@ -20,6 +20,9 @@ model:
   n_mel_channels: 80
   n_speaker_dim: 128
   n_text_dim: 512
+  seed: 1234
+  fp16_run: true
+  use_ctc_loss: true
   
   speakeremb:
     n_speakers: 1
@@ -53,10 +56,62 @@ model:
 
   train_ds:
     dataset:
-      _target_: ""
+      _target_: "nemo.collections.tts.data.datalayers.FlowtronData"
       manifest_filepath: ${train_dataset}
+      filter_length: 1024
+      hop_length: 256
+      win_length: 1024
+      sampling_rate: 22050
+      mel_fmin: 0.0
+      mel_fmax: 8000.0
+      max_wav_value: 32768.0
+      p_arpabet: 0.5
+      cmudict_path: "data/cmudict_dictionary"
+      text_cleaners: ["flowtron_cleaners"]
+      speaker_ids: null
+      use_attn_prior: false
+      attn_prior_threshold: 0.0
+      prior_cache_path: "/attention_prior_cache"
+      betab_scaling_factor: 1.0
+      keep_ambiguous: false 
+      seed: ${trainer.seed}
+      randomize: true
+    dataloader_params:
+      num_workers: 1
+      shuffle: true
+      sampler: null 
+      batch_size: ${trainer.batch_size}
+      pin_memory: false
+      drop_last: true
   
   validation_ds:
-    dataset:
-      _target_: ""
-      manifest_filepath: ${train_dataset}
+    dataset: ${model.train_ds.dataset}
+    dataloader_params:
+      num_workers: 1
+      shuffle: false
+      sampler: null 
+      batch_size: ${trainer.batch_size}
+      pin_memory: false
+
+trainer:
+  n_gpus: 1
+  rank: 0
+  output_directory: "/outdir"
+  epochs: 10000000
+  optim_algo: "RAdam"
+  learning_rate: 1e-3
+  weight_decay: 1e-6
+  sigma: 1.0
+  iters_per_checkpoint: 1000
+  batch_size: 6
+  checkpoint_path: ""
+  ignore_layers: []
+  include_layers: ["speaker", "encoder", "embedding"]
+  finetune_layers: []
+  warmstart_checkpoint_path: ""
+  with_tensorboard: true
+  grad_clip_val: 1
+  gate_loss: true
+  ctc_loss_weight: 0.01
+  blank_logprob: -8
+  ctc_loss_start_iter: 10000
