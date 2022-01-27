@@ -109,11 +109,9 @@ model:
   trainparams:
     ctc_loss_start_iter: 10000
     output_directory: "/outdir"
-    iters_per_checkpoint: 1000
     batch_size: 6
     ignore_layers: []
     include_layers: ["speaker", "encoder", "embedding"]
-    with_tensorboard: true
   
 trainer:
   gpus: 1
