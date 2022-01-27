@@ -12,7 +12,8 @@ from torch import nn
 from nemo.collections.tts.helpers.helpers import get_mask_from_lengths
 from nemo.collections.tts.models.base import SpectrogramGenerator
 from nemo.core.classes.common import PretrainedModelInfo
-from nemo.collections.tts.modules.flowtron_submodules import ARStep, ARBackStep
+from nemo.collections.tts.losses.flowtronloss import FlowtronLoss
+from nemo.collections.tts.modules.flowtron_submodules import ARStep, ARBackStep, RAdam
 from nemo.collections.tts.data.datalayers import FlowtronDataCollate
 from nemo.core.classes.common import typecheck
 
@@ -21,23 +22,23 @@ class FlowtronConfig:
     encoder: Dict[Any, Any] = MISSING
     melencoder: Dict[Any, Any] = MISSING
     gaussianmixture: Dict[Any, Any] = MISSING
+    flowtronloss: Dict[Any, Any] = MISSING
+    arstep: Dict[Any, Any] = MISSING
+    trainparams: Dict[Any, Any] = MISSING
+    speakeremb: Dict[Any, Any] = MISSING
+    textemb: Dict[Any, Any] = MISSING
     train_ds: Optional[Dict[Any, Any]] = None
     validation_ds: Optional[Dict[Any, Any]] = None
     dummy_speaker_embedding: bool = MISSING
-    speakeremb: Dict[Any, Any] = MISSING
-    textemb: Dict[Any, Any] = MISSING
     n_flows: int = MISSING
     n_components: int = MISSING
     use_gate_layer: bool = MISSING
-    n_hidden: int = MISSING
-    n_attn_channels: int = MISSING
-    n_lstm_layers: int = MISSING
-    use_cumm_attention: bool = MISSING
-    n_mel_channels: int = MISSING
     n_speaker_dim: int = MISSING
-    fp16_run: bool = MISSING
-    use_ctc_loss: bool = MISSING
     seed: int = MISSING
+    optim_algo: str = MISSING
+    learning_rate: float = MISSING
+    weight_decay: float = MISSING
+    finetune_layers: List = MISSING
 
 class FlowtronModel(SpectrogramGenerator):
     """Flowtron Model that is used to generate mel spectrograms from text"""
@@ -77,32 +78,24 @@ class FlowtronModel(SpectrogramGenerator):
         for i in range(self._cfg.n_flows):
             add_gate = True if (i == (self._cfg.n_flows-1) and self._cfg.use_gate_layer) else False
             if i % 2 == 0:
-                self.flows.append(ARStep(
-                    self._cfg.n_mel_channels, 
-                    self._cfg.n_speaker_dim,
-                    self._cfg.n_text_dim,
-                    self._cfg.n_mel_channels + self._cfg.n_speaker_dim,
-                    self._cfg.n_hidden, self._cfg.n_attn_channels,
-                    self._cfg.n_lstm_layers, add_gate,
-                    self._cfg.use_cumm_attention
-                    )
-                )
+                self.flows.append(ARStep(add_gate=add_gate, **self._cfg.arstep))
             else:
-                self.flows.append(ARBackStep(
-                    self._cfg.n_mel_channels, 
-                    self._cfg.n_speaker_dim,
-                    self._cfg.n_text_dim,
-                    self._cfg.n_mel_channels + self._cfg.n_speaker_dim,
-                    self._cfg.n_hidden, self._cfg.n_attn_channels,
-                    self._cfg.n_lstm_layers, add_gate,
-                    self._cfg.use_cumm_attention
-                    )
-                )
+                self.flows.append(ARBackStep(add_gate=add_gate, **self._cfg.arstep))
 
-        self.fp16_run = bool(self._cfg.fp16_run)
-        self.use_ctc_loss = bool(self._cfg.use_ctc_loss)
         torch.manual_seed(self._cfg.seed)
         torch.cuda.manual_seed(self._cfg.seed)
+
+        self.criterion = FlowtronLoss(gate_loss=bool(self._cfg.n_components), **self._cfg.flowtronloss)
+
+        if len(self._cfg.finetune_layers):
+            for name, param in self.named_parameters():
+                if name in self._cfg.finetune_layers:
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
+
+        self.iteration = 0
+        self.apply_ctc = False
     
     def forward(self, mel, speaker_ids, text, in_lens, out_lens,
                 attn_prior=None):
@@ -215,179 +208,92 @@ class FlowtronModel(SpectrogramGenerator):
             n_frames_per_step=1, use_attn_prior=valset.use_attn_prior)
         self._validation_dl = torch.utils.data.DataLoader(valset, collate_fn=collate_fn, **val_data_config.dataloader_params)
   
-    def training_step(self, *args, **kwargs):
+    def training_step(self, batch, batch_idx): 
+        (mel, spk_ids, txt, in_lens, out_lens,
+            gate_target, attn_prior) = batch
+        mel, spk_ids, txt = mel.cuda(), spk_ids.cuda(), txt.cuda()
+        in_lens, out_lens = in_lens.cuda(), out_lens.cuda()
+        gate_target = gate_target.cuda()
+        attn_prior = attn_prior.cuda() if attn_prior is not None else None
+
+        if self._cfg.flowtronloss.use_ctc_loss and self.iteration >= self._cfg.trainparams.ctc_loss_start_iter:
+            self.apply_ctc = True
         
+        (z, log_s_list, gate_pred, attn,
+            attn_logprob, mean, log_var, prob) = self.forward(
+            mel, spk_ids, txt, in_lens, out_lens, attn_prior)
 
-        criterion = FlowtronLoss(sigma, bool(model_config['n_components']),
-                                gate_loss, use_ctc_loss, ctc_loss_weight,
-                                blank_logprob)
-        model = Flowtron(**model_config).cuda()
+        loss_nll, loss_gate, loss_ctc = self.criterion(
+            (z, log_s_list, gate_pred, attn,
+                attn_logprob, mean, log_var, prob),
+            gate_target, in_lens, out_lens, is_validation=False)
+        
+        loss = loss_nll + loss_gate
 
-        if len(finetune_layers):
-            for name, param in model.named_parameters():
-                if name in finetune_layers:
-                    param.requires_grad = True
-                else:
-                    param.requires_grad = False
+        if apply_ctc:
+            loss += loss_ctc * self.criterion.ctc_loss_weight
 
-        print("Initializing %s optimizer" % (optim_algo))
-        if optim_algo == 'Adam':
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
-                                        weight_decay=weight_decay)
-        elif optim_algo == 'RAdam':
-            optimizer = RAdam(model.parameters(), lr=learning_rate,
-                            weight_decay=weight_decay)
-        else:
-            print("Unrecognized optimizer %s!" % (optim_algo))
-            exit(1)
+        reduced_loss = loss.item()
+        reduced_gate_loss = loss_gate.item()
+        reduced_mle_loss = loss_nll.item()
+        reduced_ctc_loss = loss_ctc.item()
+        
+        output = {
+            'loss': [reduced_loss, reduced_gate_loss, reduced_mle_loss, reduced_ctc_loss],
+            'progress_bar': {'training_loss': loss},
+            'log': {'loss': loss},
+        }
 
-        # Load checkpoint if one exists
-        iteration = 0
-        if warmstart_checkpoint_path != "":
-            model = warmstart(warmstart_checkpoint_path, model)
+        self.iteration += 1
 
-        if checkpoint_path != "":
-            model, optimizer, iteration = load_checkpoint(checkpoint_path, model,
-                                                        optimizer, ignore_layers)
-            iteration += 1  # next iteration is iteration + 1
+        return output
 
-        if n_gpus > 1:
-            model = apply_gradient_allreduce(model)
-        print(model)
-        scaler = amp.GradScaler(enabled=fp16_run)
+    def validation_step(self, batch, batch_idx):
+        (mel, spk_ids, txt, in_lens, out_lens,
+            gate_target, attn_prior) = batch
+        
+        mel, spk_ids, txt = mel.cuda(), spk_ids.cuda(), txt.cuda()
+        in_lens, out_lens = in_lens.cuda(), out_lens.cuda()
+        gate_target = gate_target.cuda()
+        attn_prior = attn_prior.cuda() if attn_prior is not None else None
+        (z, log_s_list, gate_pred, attn, attn_logprob,
+            mean, log_var, prob) = self.forward(
+            mel, spk_ids, txt, in_lens, out_lens, attn_prior)
 
-        train_loader, valset, collate_fn = prepare_dataloaders(
-            data_config, n_gpus, batch_size)
+        loss_nll, loss_gate, loss_ctc = self.criterion(
+            (z, log_s_list, gate_pred, attn,
+                attn_logprob, mean, log_var, prob),
+            gate_target, in_lens, out_lens, is_validation=True)
+        loss = loss_nll + loss_gate
 
-        # Get shared output_directory ready
-        if rank == 0 and not os.path.isdir(output_directory):
-            os.makedirs(output_directory)
-            os.chmod(output_directory, 0o775)
-            print("Output directory", output_directory)
+        if self.apply_ctc:
+            loss += loss_ctc * self.criterion.ctc_loss_weight
+        
+        reduced_val_loss = loss.item()
+        reduced_val_loss_nll = loss_nll.item()
+        reduced_val_loss_gate = loss_gate.item()
+        reduced_val_loss_ctc = loss_ctc.item()
 
-        if with_tensorboard and rank == 0:
-            tboard_out_path = os.path.join(output_directory, 'logs')
-            print("Setting up Tensorboard log in %s" % (tboard_out_path))
-            logger = FlowtronLogger(tboard_out_path)
+        return {
+            "val_loss": reduced_val_loss,
+            "val_loss_nll": reduced_val_loss_nll,
+            "val_loss_gate": reduced_val_loss_gate,
+            "val_loss_ctc": reduced_val_loss_ctc
+        }
 
-        # force set the learning rate to what is specified
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = learning_rate
-
-        model.train()
-        epoch_offset = max(0, int(iteration / len(train_loader)))
-        apply_ctc = False
-
-        # ================ MAIN TRAINNIG LOOP! ===================
-        for epoch in range(epoch_offset, epochs):
-            print("Epoch: {}".format(epoch))
-            for batch in train_loader:
-                model.zero_grad()
-                (mel, spk_ids, txt, in_lens, out_lens,
-                    gate_target, attn_prior) = batch
-                mel, spk_ids, txt = mel.cuda(), spk_ids.cuda(), txt.cuda()
-                in_lens, out_lens = in_lens.cuda(), out_lens.cuda()
-                gate_target = gate_target.cuda()
-                attn_prior = attn_prior.cuda() if attn_prior is not None else None
-
-                if use_ctc_loss and iteration >= ctc_loss_start_iter:
-                    apply_ctc = True
-                with amp.autocast(enabled=fp16_run):
-                    (z, log_s_list, gate_pred, attn,
-                        attn_logprob, mean, log_var, prob) = model(
-                        mel, spk_ids, txt, in_lens, out_lens, attn_prior)
-
-                    loss_nll, loss_gate, loss_ctc = criterion(
-                        (z, log_s_list, gate_pred, attn,
-                            attn_logprob, mean, log_var, prob),
-                        gate_target, in_lens, out_lens, is_validation=False)
-                    loss = loss_nll + loss_gate
-
-                    if apply_ctc:
-                        loss += loss_ctc * criterion.ctc_loss_weight
-
-                if n_gpus > 1:
-                    reduced_loss = reduce_tensor(loss.data, n_gpus).item()
-                    reduced_gate_loss = reduce_tensor(
-                        loss_gate.data,
-                        n_gpus).item()
-                    reduced_mle_loss = reduce_tensor(
-                        loss_nll.data,
-                        n_gpus).item()
-                    reduced_ctc_loss = reduce_tensor(
-                        loss_ctc.data,
-                        n_gpus).item()
-                else:
-                    reduced_loss = loss.item()
-                    reduced_gate_loss = loss_gate.item()
-                    reduced_mle_loss = loss_nll.item()
-                    reduced_ctc_loss = loss_ctc.item()
-
-                scaler.scale(loss).backward()
-                if grad_clip_val > 0:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(),
-                        grad_clip_val)
-
-                scaler.step(optimizer)
-                scaler.update()
-
-                if rank == 0:
-                    print("{}:\t{:.9f}".format(
-                        iteration,
-                        reduced_loss),
-                        flush=True)
-
-                if with_tensorboard and rank == 0:
-                    logger.add_scalar('training/loss', reduced_loss, iteration)
-                    logger.add_scalar(
-                        'training/loss_gate',
-                        reduced_gate_loss,
-                        iteration)
-                    logger.add_scalar(
-                        'training/loss_nll',
-                        reduced_mle_loss,
-                        iteration)
-                    logger.add_scalar(
-                        'training/loss_ctc',
-                        reduced_ctc_loss,
-                        iteration)
-                    logger.add_scalar(
-                        'learning_rate',
-                        learning_rate,
-                        iteration)
-
-                if iteration % iters_per_checkpoint == 0:
-                    (val_loss, val_loss_nll, val_loss_gate, val_loss_ctc,
-                        attns, gate_pred, gate_target) = \
-                        compute_validation_loss(model, criterion, valset,
-                                                batch_size, n_gpus, apply_ctc)
-                    if rank == 0:
-                        print("Validation loss {}: {:9f}  ".format(
-                            iteration, val_loss))
-                        if with_tensorboard:
-                            logger.log_validation(
-                                val_loss, val_loss_nll,
-                                val_loss_gate, val_loss_ctc,
-                                attns, gate_pred, gate_target, iteration)
-
-                        checkpoint_path = "{}/model_{}".format(
-                            output_directory, iteration)
-                        save_checkpoint(model, optimizer, learning_rate, iteration,
-                                        checkpoint_path)
-
-                iteration += 1
-        return self.step_('train', *args, **kwargs)
-
-    def validation_step(self, *args, **kwargs):
-        return self.step_('val', *args, **kwargs)
-
-     # This is useful for multiple validation data loader setup
     def validation_epoch_end(self, outputs, dataloader_idx: int = 0):
         val_loss_mean = torch.stack([x['val_loss'] for x in outputs]).mean()
         return {'val_loss': val_loss_mean}
 
     def configure_optimizers(self):
-        pass
-    
+        print("Initializing %s optimizer" % (self._cfg.optim_algo))
+        if self._cfg.optim_algo == 'Adam':
+            optimizer = torch.optim.Adam(self.named_parameters(), lr=self._cfg.learning_rate,
+                                        weight_decay=self._cfg.weight_decay)
+        elif self._cfg.optim_algo == 'RAdam':
+            optimizer = RAdam(self.named_parameters(), lr=self._cfg.learning_rate,
+                            weight_decay=self._cfg.weight_decay)
+        else:
+            print("Unrecognized optimizer %s!" % (self._cfg.optim_algo))
+            exit(1)
+        return optimizer

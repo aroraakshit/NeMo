@@ -57,6 +57,7 @@ from torch.nn.utils.rnn import pad_sequence
 from tqdm import tqdm
 from scipy.stats import betabinom
 from scipy.io.wavfile import read
+from librosa.filters import mel as librosa_mel_fn
 
 from nemo.collections.asr.parts.preprocessing.features import WaveformFeaturizer
 from nemo.collections.asr.parts.preprocessing.segment import AudioSegment

@@ -13,16 +13,13 @@ model:
   n_flows: 2
   n_components: 0
   use_gate_layer: true
-  n_hidden: 640
-  n_attn_channels: 1024
-  n_lstm_layers: 2
-  use_cumm_attention: false
-  n_mel_channels: 80
   n_speaker_dim: 128
   n_text_dim: 512
   seed: 1234
-  fp16_run: true
-  use_ctc_loss: true
+  optim_algo: "RAdam"
+  learning_rate: 1e-3
+  weight_decay: 1e-6
+  finetune_layers: []
   
   speakeremb:
     n_speakers: 1
@@ -53,6 +50,15 @@ model:
     n_mel_channels: ${model.n_mel_channels}
     fixed_gaussian: true
     mean_scale: 0.0
+
+  arstep:
+    n_mel_channels: 80
+    n_speaker_dim: ${model.n_speaker_dim}
+    n_text_dim: ${model.n_text_dim}
+    n_hidden: 640
+    n_attn_channels: 1024
+    n_lstm_layers: 2
+    use_cumm_attention: false
 
   train_ds:
     dataset:
@@ -93,25 +99,37 @@ model:
       batch_size: ${trainer.batch_size}
       pin_memory: false
 
+  flowtronloss:
+    sigma: 1.0
+    gate_loss: true
+    ctc_loss_weight: 0.01
+    use_ctc_loss: true
+    blank_logprob: -8
+
+  trainparams:
+    ctc_loss_start_iter: 10000
+    output_directory: "/outdir"
+    iters_per_checkpoint: 1000
+    batch_size: 6
+    ignore_layers: []
+    include_layers: ["speaker", "encoder", "embedding"]
+    with_tensorboard: true
+  
 trainer:
-  n_gpus: 1
-  rank: 0
-  output_directory: "/outdir"
-  epochs: 10000000
-  optim_algo: "RAdam"
-  learning_rate: 1e-3
-  weight_decay: 1e-6
-  sigma: 1.0
-  iters_per_checkpoint: 1000
-  batch_size: 6
-  checkpoint_path: ""
-  ignore_layers: []
-  include_layers: ["speaker", "encoder", "embedding"]
-  finetune_layers: []
-  warmstart_checkpoint_path: ""
-  with_tensorboard: true
-  grad_clip_val: 1
-  gate_loss: true
-  ctc_loss_weight: 0.01
-  blank_logprob: -8
-  ctc_loss_start_iter: 10000
+  gpus: 1
+  max_epochs: 10000000
+  num_nodes: 1
+  accelerator: ddp
+  accumulate_grad_batches: 1
+  checkpoint_callback: False  # Provided by exp_manager
+  logger: False  # Provided by exp_manager
+  gradient_clip_val: 1.0
+  flush_logs_every_n_steps: 1000
+  log_every_n_steps: 200
+  check_val_every_n_epoch: 25
+
+exp_manager:
+  exp_dir: null
+  name: ${name}
+  create_tensorboard_logger: True
+  create_checkpoint_callback: True
