@@ -192,8 +192,21 @@ class FlowtronModel(SpectrogramGenerator):
 
     @classmethod
     def list_available_models(cls) -> PretrainedModelInfo:
-        #TODO
-        return None
+        """
+        This method returns a list of pre-trained model which can be instantiated directly from NVIDIA's NGC cloud.
+        Returns:
+            List of available pre-trained models.
+        """
+        list_of_models = []
+        model = PretrainedModelInfo(
+            pretrained_model_name="",
+            location="",
+            description="",
+            class_=cls,
+            aliases=[""],
+        )
+        list_of_models.append(model)
+        return list_of_models
     
     def setup_training_data(self, train_data_config: OmegaConf):
         trainset = instantiate(train_data_config.dataset)

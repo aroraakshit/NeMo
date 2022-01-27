@@ -5,8 +5,8 @@
 name: Flowtron
 
 # paths to datasets
-train_dataset: ???
-validation_dataset: ???
+train_dataset: "/akshita/flowtron/filelists/ljs_audiopaths_text_sid_train_filelist.txt"
+validation_dataset: "/akshita/flowtron/filelists/ljs_audiopaths_text_sid_val_filelist.txt"
 
 model:
   dummy_speaker_embedding: false
