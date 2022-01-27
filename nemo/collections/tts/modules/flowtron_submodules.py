@@ -176,9 +176,9 @@ class MelEncoder(NeuralModule):
         # sort the data by decreasing length using provided index
         # we assume batch index is in dim=1
         padded_data = padded_data[:, sorted_idx]
-        padded_data = nn.utils.rnn.pack_padded_sequence(padded_data, lens)
+        padded_data = torch.nn.utils.rnn.pack_padded_sequence(padded_data, lens)
         hidden_vectors = recurrent_model(padded_data)[0]
-        hidden_vectors, _ = nn.utils.rnn.pad_packed_sequence(hidden_vectors)
+        hidden_vectors, _ = torch.nn.utils.rnn.pad_packed_sequence(hidden_vectors)
         # unsort the results at dim=1 and return
         hidden_vectors = hidden_vectors[:, unsort_idx]
         return hidden_vectors
@@ -201,8 +201,9 @@ class MelEncoder(NeuralModule):
     def forward(self, x, lens):
         if x.size()[0] > 1:
             x_embedded = []
-            for b_ind in range(x.size()[0]):  # TODO: improve speed
-                curr_x = x[b_ind:b_ind+1, :, :in_lens[b_ind]].clone()
+            # TODO: Speed this up without sacrificing correctness
+            for b_ind in range(x.size()[0]):
+                curr_x = x[b_ind:b_ind+1, :, :lens[b_ind]].clone()
                 for conv in self.convolutions:
                     curr_x = F.dropout(
                         F.relu(conv(curr_x)),
@@ -212,16 +213,10 @@ class MelEncoder(NeuralModule):
             x = torch.nn.utils.rnn.pad_sequence(x_embedded, batch_first=True)
         else:
             for conv in self.convolutions:
-                x = F.dropout(
-                    F.relu(conv(x)),
-                    0.5,
-                    self.training)
+                x = F.dropout(F.relu(conv(x)), 0.5, self.training)
             x = x.transpose(1, 2)
 
         x = x.transpose(0, 1)
-
-        x = torch.nn.utils.rnn.pack_padded_sequence(
-            x, in_lens.cpu(), batch_first=True)
 
         self.lstm.flatten_parameters()
         if lens is not None:
