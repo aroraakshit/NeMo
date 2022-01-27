@@ -230,7 +230,7 @@ class FlowtronModel(SpectrogramGenerator):
         
         loss = loss_nll + loss_gate
 
-        if apply_ctc:
+        if self.apply_ctc:
             loss += loss_ctc * self.criterion.ctc_loss_weight
 
         reduced_loss = loss.item()
