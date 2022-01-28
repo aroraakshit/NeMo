@@ -1,0 +1,133 @@
+# This config contains the default values for training Flowtron model on LJSpeech dataset.
+# If you want to train model on other dataset, you can change config values according to your dataset.
+# Most dataset-specific arguments are in the head of the config file, see below.
+
+name: Flowtron
+
+# paths to datasets
+train_dataset: "/akshita/flowtron/filelists/ljs_audiopaths_text_sid_train_filelist.txt"
+validation_dataset: "/akshita/flowtron/filelists/ljs_audiopaths_text_sid_val_filelist.txt"
+
+model:
+  dummy_speaker_embedding: false
+  n_flows: 2
+  n_components: 0
+  use_gate_layer: true
+  n_speaker_dim: 128
+  n_text_dim: 512
+  seed: 1234
+  optim_algo: "RAdam"
+  learning_rate: 1e-3
+  weight_decay: 1e-6
+  finetune_layers: []
+  
+  speakeremb:
+    n_speakers: 1
+    n_speaker_dim: ${model.n_speaker_dim}
+
+  textemb:
+    n_text: 185
+    n_text_dim: ${model.n_text_dim}
+
+  encoder:
+    _target_: nemo.collections.tts.modules.flowtron_modules.Encoder
+    encoder_n_convolutions: 3
+    encoder_embedding_dim: ${model.n_text_dim}
+    encoder_kernel_size: 5
+    norm_fn: torch.nn.InstanceNorm1d
+
+  melencoder:
+    _target_: nemo.collections.tts.modules.flowtron_modules.MelEncoder
+    encoder_n_convolutions: 2
+    encoder_embedding_dim: 512
+    encoder_kernel_size: 3
+    norm_fn: torch.nn.InstanceNorm1d
+
+  gaussianmixture:
+    _target_: nemo.collections.tts.modules.flowtron_modules.GaussianMixture
+    n_hidden: ${model.melencoder.encoder_embedding_dim}
+    n_components: ${model.n_components}
+    n_mel_channels: ${model.n_mel_channels}
+    fixed_gaussian: true
+    mean_scale: 0.0
+
+  arstep:
+    n_mel_channels: 80
+    n_speaker_dim: ${model.n_speaker_dim}
+    n_text_dim: ${model.n_text_dim}
+    n_hidden: 640
+    n_attn_channels: 1024
+    n_lstm_layers: 2
+    use_cumm_attention: false
+
+  train_ds:
+    dataset:
+      _target_: "nemo.collections.tts.data.datalayers.FlowtronData"
+      manifest_filepath: ${train_dataset}
+      filter_length: 1024
+      hop_length: 256
+      win_length: 1024
+      sampling_rate: 22050
+      mel_fmin: 0.0
+      mel_fmax: 8000.0
+      max_wav_value: 32768.0
+      p_arpabet: 0.5
+      cmudict_path: "data/cmudict_dictionary"
+      text_cleaners: ["flowtron_cleaners"]
+      speaker_ids: null
+      use_attn_prior: false
+      attn_prior_threshold: 0.0
+      prior_cache_path: "/attention_prior_cache"
+      betab_scaling_factor: 1.0
+      keep_ambiguous: false 
+      seed: ${trainer.seed}
+      randomize: true
+    dataloader_params:
+      num_workers: 1
+      shuffle: true
+      sampler: null 
+      batch_size: ${trainer.batch_size}
+      pin_memory: false
+      drop_last: true
+  
+  validation_ds:
+    dataset: ${model.train_ds.dataset}
+    dataloader_params:
+      num_workers: 1
+      shuffle: false
+      sampler: null 
+      batch_size: ${trainer.batch_size}
+      pin_memory: false
+
+  flowtronloss:
+    sigma: 1.0
+    gate_loss: true
+    ctc_loss_weight: 0.01
+    use_ctc_loss: true
+    blank_logprob: -8
+
+  trainparams:
+    ctc_loss_start_iter: 10000
+    output_directory: "/outdir"
+    batch_size: 6
+    ignore_layers: []
+    include_layers: ["speaker", "encoder", "embedding"]
+  
+trainer:
+  gpus: 1
+  max_epochs: 10000000
+  num_nodes: 1
+  accelerator: ddp
+  accumulate_grad_batches: 1
+  checkpoint_callback: False  # Provided by exp_manager
+  logger: False  # Provided by exp_manager
+  gradient_clip_val: 1.0
+  flush_logs_every_n_steps: 1000
+  log_every_n_steps: 200
+  check_val_every_n_epoch: 25
+
+exp_manager:
+  exp_dir: null
+  name: ${name}
+  create_tensorboard_logger: True
+  create_checkpoint_callback: True
