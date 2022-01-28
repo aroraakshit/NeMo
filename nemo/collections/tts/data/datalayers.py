@@ -986,7 +986,7 @@ class FlowtronData(Dataset):
                  prior_cache_path="", betab_scaling_factor=1.0, randomize=True,
                  keep_ambiguous=False, seed=1234):
         self.max_wav_value = max_wav_value
-        self.audiopaths_and_text = load_filepaths_and_text(filelist_path)
+        self.audiopaths_and_text = load_filepaths_and_text(manifest_filepath)
         self.use_attn_prior = use_attn_prior
         self.betab_scaling_factor = betab_scaling_factor
         self.attn_prior_threshold = attn_prior_threshold

@@ -14,7 +14,7 @@ from nemo.collections.tts.models.base import SpectrogramGenerator
 from nemo.core.classes.common import PretrainedModelInfo
 from nemo.collections.tts.losses.flowtronloss import FlowtronLoss
 from nemo.collections.tts.modules.flowtron_submodules import ARStep, ARBackStep, RAdam
-from nemo.collections.tts.data.datalayers import FlowtronDataCollate
+from nemo.collections.tts.data.datalayers import FlowtronDataCollate, FlowtronData
 from nemo.core.classes.common import typecheck
 
 @dataclass
@@ -34,11 +34,11 @@ class FlowtronConfig:
     n_components: int = MISSING
     use_gate_layer: bool = MISSING
     n_speaker_dim: int = MISSING
-    seed: int = MISSING
     optim_algo: str = MISSING
     learning_rate: float = MISSING
     weight_decay: float = MISSING
     finetune_layers: List = MISSING
+    seed: int = MISSING
 
 class FlowtronModel(SpectrogramGenerator):
     """Flowtron Model that is used to generate mel spectrograms from text"""
@@ -252,9 +252,14 @@ class FlowtronModel(SpectrogramGenerator):
         reduced_ctc_loss = loss_ctc.item()
         
         output = {
-            'loss': [reduced_loss, reduced_gate_loss, reduced_mle_loss, reduced_ctc_loss],
-            'progress_bar': {'training_loss': loss},
-            'log': {'loss': loss},
+            'loss': loss,
+            'progress_bar': {'training_loss': reduced_loss},
+            'log': {
+                'loss': reduced_loss, 
+                'gate_loss': reduced_gate_loss, 
+                'mle_loss': reduced_mle_loss, 
+                'ctc_loss': reduced_ctc_loss
+            },
         }
 
         self.iteration += 1
@@ -281,17 +286,12 @@ class FlowtronModel(SpectrogramGenerator):
 
         if self.apply_ctc:
             loss += loss_ctc * self.criterion.ctc_loss_weight
-        
-        reduced_val_loss = loss.item()
-        reduced_val_loss_nll = loss_nll.item()
-        reduced_val_loss_gate = loss_gate.item()
-        reduced_val_loss_ctc = loss_ctc.item()
 
         return {
-            "val_loss": reduced_val_loss,
-            "val_loss_nll": reduced_val_loss_nll,
-            "val_loss_gate": reduced_val_loss_gate,
-            "val_loss_ctc": reduced_val_loss_ctc
+            "val_loss": loss,
+            "val_loss_nll": loss_nll,
+            "val_loss_gate": loss_gate,
+            "val_loss_ctc": loss_ctc
         }
 
     def validation_epoch_end(self, outputs, dataloader_idx: int = 0):
@@ -301,12 +301,25 @@ class FlowtronModel(SpectrogramGenerator):
     def configure_optimizers(self):
         print("Initializing %s optimizer" % (self._cfg.optim_algo))
         if self._cfg.optim_algo == 'Adam':
-            optimizer = torch.optim.Adam(self.named_parameters(), lr=self._cfg.learning_rate,
+            optimizer = torch.optim.Adam(self.parameters(), lr=self._cfg.learning_rate,
                                         weight_decay=self._cfg.weight_decay)
         elif self._cfg.optim_algo == 'RAdam':
-            optimizer = RAdam(self.named_parameters(), lr=self._cfg.learning_rate,
+            optimizer = RAdam(self.parameters(), lr=self._cfg.learning_rate,
                             weight_decay=self._cfg.weight_decay)
         else:
             print("Unrecognized optimizer %s!" % (self._cfg.optim_algo))
             exit(1)
         return optimizer
+
+    def generate_spectrogram(self, tokens: 'torch.tensor', **kwargs) -> 'torch.tensor':
+        speaker_vecs = self.speaker_vecs[None]
+        text = tokens[None]
+        residual = torch.cuda.FloatTensor(1, 80, 400).normal_() * 0.5
+        spectrogram_pred = self.infer(residual, speaker_vecs, text, gate_threshold=0.5)
+        return spectrogram_pred
+
+    def parse(self, str_input: str, **kwargs) -> 'torch.tensor':
+        trainset = instantiate(self._cfg.train_ds.dataset)
+        self.speaker_vecs = trainset.get_speaker_id(kwargs['speaker_id']).cuda()
+        text = trainset.get_text(str_input).cuda()
+        return text

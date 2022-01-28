@@ -1,7 +1,7 @@
 import pytorch_lightning as pl
 
 from nemo.collections.common.callbacks import LogEpochTimeCallback
-from nemo.collections.tts.models import Flowtron
+from nemo.collections.tts.models import FlowtronModel
 from nemo.core.config import hydra_runner
 from nemo.utils.exp_manager import exp_manager
 
@@ -12,7 +12,7 @@ def main(cfg):
 
     exp_manager(trainer, cfg.get("exp_manager", None))
 
-    model = Flowtron(cfg=cfg.model, trainer=trainer)
+    model = FlowtronModel(cfg=cfg.model, trainer=trainer)
 
     lr_logger = pl.callbacks.LearningRateMonitor()
     epoch_time_logger = LogEpochTimeCallback()

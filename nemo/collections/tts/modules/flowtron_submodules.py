@@ -20,7 +20,6 @@ class Encoder(NeuralModule):
         encoder_n_convolutions: int,
         encoder_embedding_dim: int,
         encoder_kernel_size: int,
-        norm_fn: Callable, 
     ):
         """
         Flowtron Encoder. Three 1-d convolution banks and a bidirectionsl LSTM
@@ -46,7 +45,7 @@ class Encoder(NeuralModule):
                     dilation=1,
                     w_init_gain="relu"
                 ),
-                norm_fn(encoder_embedding_dim, affine=True)
+                torch.nn.InstanceNorm1d(encoder_embedding_dim, affine=True)
             )
             convolutions.append(conv_layer)
         self.convolutions = torch.nn.ModuleList(convolutions)
@@ -55,20 +54,20 @@ class Encoder(NeuralModule):
             encoder_embedding_dim, int(encoder_embedding_dim / 2), 1, batch_first=True, bidirectional=True
         )
 
-    @property
-    def input_types(self):
-        return {
-            "x": NeuralType(('B', 'D', 'T'), EmbeddedTextType()),
-            "in_lens": NeuralType(('B'), LengthsType())
-        }
+    # @property
+    # def input_types(self):
+    #     return {
+    #         "x": NeuralType(('B', 'D', 'T'), EmbeddedTextType()),
+    #         "in_lens": NeuralType(('B'), LengthsType())
+    #     }
     
-    @property
-    def output_types(self):
-        return {
-            "encoder_embedding": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
-        }
+    # @property
+    # def output_types(self):
+    #     return {
+    #         "encoder_embedding": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
+    #     }
     
-    @typecheck()
+    # @typecheck()
     def forward(self, x, in_lens):
         if x.size()[0] > 1:
             x_embedded = []
@@ -116,7 +115,6 @@ class MelEncoder(NeuralModule):
         encoder_n_convolutions: int,
         encoder_embedding_dim: int,
         encoder_kernel_size: int,
-        norm_fn: Callable, 
     ):
         """
         Flowtron MelEncoder. Three 1-d convolution banks and a bidirectionsl LSTM
@@ -142,7 +140,7 @@ class MelEncoder(NeuralModule):
                     dilation=1,
                     w_init_gain="relu"
                 ),
-                norm_fn(encoder_embedding_dim, affine=True)
+                torch.nn.InstanceNorm1d(encoder_embedding_dim, affine=True)
             )
             convolutions.append(conv_layer)
         self.convolutions = torch.nn.ModuleList(convolutions)
@@ -439,7 +437,7 @@ class ARStep(NeuralModule):
         self, 
         n_mel_channels, 
         n_speaker_dim, 
-        n_text_channels, 
+        n_text_dim, 
         n_hidden,
         n_attn_channels, 
         n_lstm_layers,
@@ -454,12 +452,12 @@ class ARStep(NeuralModule):
         self.lstm = torch.nn.LSTM(n_hidden+n_attn_channels, n_hidden, n_lstm_layers)
         self.attention_lstm = torch.nn.LSTM(n_mel_channels, n_hidden)
         self.attention_layer = Attention(n_hidden, n_speaker_dim,
-                                        n_text_channels, n_attn_channels)
+                                        n_text_dim, n_attn_channels)
         if self.use_cumm_attention:
             self.attn_cond_layer = AttentionConditioningLayer(
                 input_dim=2, attention_n_filters=32,
                 attention_kernel_sizes=[5, 3],
-                attention_dim=n_text_channels + n_speaker_dim)
+                attention_dim=n_text_dim + n_speaker_dim)
         self.dense_layer = DenseLayer(in_dim=n_hidden,
                                     sizes=[n_hidden, n_hidden])
         if add_gate:
@@ -632,8 +630,7 @@ class ARBackStep(NeuralModule):
                  n_hidden, n_attn_channels, n_lstm_layers,
                  add_gate, use_cumm_attention):
         super(ARBackStep, self).__init__()
-        self.ar_step = ARStep(n_mel_channels, n_speaker_dim, n_text_dim,
-                               n_mel_channels+n_speaker_dim, n_hidden,
+        self.ar_step = ARStep(n_mel_channels, n_speaker_dim, n_text_dim, n_hidden,
                                n_attn_channels, n_lstm_layers, add_gate,
                                use_cumm_attention)
 
@@ -693,7 +690,7 @@ class RAdam(Optimizer):
         """
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         self.buffer = [[None, None, None] for _ in range(10)]
-        super().__init__(params, defaults)
+        super(RAdam, self).__init__(params, defaults)
 
     def step(self, closure=None):
 
