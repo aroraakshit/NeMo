@@ -15,11 +15,11 @@ model:
   use_gate_layer: true
   n_speaker_dim: 128
   n_text_dim: 512
-  seed: 1234
   optim_algo: "RAdam"
   learning_rate: 1e-3
   weight_decay: 1e-6
   finetune_layers: []
+  seed: 1234
   
   speakeremb:
     n_speakers: 1
@@ -34,25 +34,23 @@ model:
     encoder_n_convolutions: 3
     encoder_embedding_dim: ${model.n_text_dim}
     encoder_kernel_size: 5
-    norm_fn: torch.nn.InstanceNorm1d
 
   melencoder:
     _target_: "nemo.collections.tts.modules.flowtron_submodules.MelEncoder"
     encoder_n_convolutions: 2
     encoder_embedding_dim: 512
     encoder_kernel_size: 3
-    norm_fn: torch.nn.InstanceNorm1d
 
   gaussianmixture:
     _target_: "nemo.collections.tts.modules.flowtron_submodules.GaussianMixture"
     n_hidden: ${model.melencoder.encoder_embedding_dim}
     n_components: ${model.n_components}
-    n_mel_channels: ${model.n_mel_channels}
+    n_mel_channels: 80
     fixed_gaussian: true
     mean_scale: 0.0
 
   arstep:
-    n_mel_channels: 80
+    n_mel_channels: ${model.gaussianmixture.n_mel_channels}
     n_speaker_dim: ${model.n_speaker_dim}
     n_text_dim: ${model.n_text_dim}
     n_hidden: 640
@@ -80,13 +78,13 @@ model:
       prior_cache_path: "/attention_prior_cache"
       betab_scaling_factor: 1.0
       keep_ambiguous: false 
-      seed: ${trainer.seed}
+      seed: {model.seed}
       randomize: true
     dataloader_params:
       num_workers: 1
       shuffle: true
       sampler: null 
-      batch_size: ${trainer.batch_size}
+      batch_size: ${model.trainparams.batch_size}
       pin_memory: false
       drop_last: true
   
@@ -96,12 +94,11 @@ model:
       num_workers: 1
       shuffle: false
       sampler: null 
-      batch_size: ${trainer.batch_size}
+      batch_size: ${model.trainparams.batch_size}
       pin_memory: false
 
   flowtronloss:
     sigma: 1.0
-    gate_loss: true
     ctc_loss_weight: 0.01
     use_ctc_loss: true
     blank_logprob: -8
