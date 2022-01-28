@@ -20,6 +20,7 @@ try:
     from nemo.collections.tts.models.fastpitch_hifigan_e2e import FastPitchHifiGanE2EModel
     from nemo.collections.tts.models.fastspeech2 import FastSpeech2Model
     from nemo.collections.tts.models.fastspeech2_hifigan_e2e import FastSpeech2HifiGanE2EModel
+    from nemo.collections.tts.models.flowtron import FlowtronModel
     from nemo.collections.tts.models.glow_tts import GlowTTSModel
     from nemo.collections.tts.models.hifigan import HifiGanModel
     from nemo.collections.tts.models.melgan import MelGanModel
@@ -57,4 +58,5 @@ __all__ = [
     "AlignerModel",
     "MixerTTSModel",
     "UnivNetModel",
+    "Flowtron",
 ]

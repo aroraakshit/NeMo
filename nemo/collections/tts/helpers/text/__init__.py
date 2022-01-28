@@ -1,8 +1,8 @@
 """ from https://github.com/keithito/tacotron """
 import re
-from text import cleaners
-from text.symbols import symbols
-from text.symbols import _punctuation as punctuation_symbols
+from .cleaners import *
+from .symbols import symbols
+from .symbols import _punctuation as punctuation_symbols
 
 # Mappings from symbol to numeric ID and vice versa:
 _symbol_to_id = {s: i for i, s in enumerate(symbols)}
@@ -117,4 +117,4 @@ def files_to_list(filename):
     files = [f.rstrip() for f in files]
     return files
 
-HETERONYMS = set(files_to_list('data/heteronyms'))
+HETERONYMS = set(files_to_list('/akshita/flowtron/data/heteronyms'))

@@ -33,7 +33,7 @@ _letter_to_arpabet = {
 
 # must ignore roman numerals
 _acronym_re = re.compile(r'([A-Z][A-Z]+)s?|([A-Z]\.([A-Z]\.)+s?)')
-cmudict = CMUDict('data/cmudict_dictionary', keep_ambiguous=False)
+cmudict = CMUDict('/akshita/flowtron/data/cmudict_dictionary', keep_ambiguous=False)
 
 
 def _expand_acronyms(m, add_spaces=True):

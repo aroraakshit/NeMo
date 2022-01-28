@@ -30,21 +30,21 @@ model:
     n_text_dim: ${model.n_text_dim}
 
   encoder:
-    _target_: nemo.collections.tts.modules.flowtron_modules.Encoder
+    _target_: "nemo.collections.tts.modules.flowtron_submodules.Encoder"
     encoder_n_convolutions: 3
     encoder_embedding_dim: ${model.n_text_dim}
     encoder_kernel_size: 5
     norm_fn: torch.nn.InstanceNorm1d
 
   melencoder:
-    _target_: nemo.collections.tts.modules.flowtron_modules.MelEncoder
+    _target_: "nemo.collections.tts.modules.flowtron_submodules.MelEncoder"
     encoder_n_convolutions: 2
     encoder_embedding_dim: 512
     encoder_kernel_size: 3
     norm_fn: torch.nn.InstanceNorm1d
 
   gaussianmixture:
-    _target_: nemo.collections.tts.modules.flowtron_modules.GaussianMixture
+    _target_: "nemo.collections.tts.modules.flowtron_submodules.GaussianMixture"
     n_hidden: ${model.melencoder.encoder_embedding_dim}
     n_components: ${model.n_components}
     n_mel_channels: ${model.n_mel_channels}
@@ -72,7 +72,7 @@ model:
       mel_fmax: 8000.0
       max_wav_value: 32768.0
       p_arpabet: 0.5
-      cmudict_path: "data/cmudict_dictionary"
+      cmudict_path: "/akshita/flowtron/data/cmudict_dictionary"
       text_cleaners: ["flowtron_cleaners"]
       speaker_ids: null
       use_attn_prior: false
@@ -108,7 +108,6 @@ model:
 
   trainparams:
     ctc_loss_start_iter: 10000
-    output_directory: "/outdir"
     batch_size: 6
     ignore_layers: []
     include_layers: ["speaker", "encoder", "embedding"]

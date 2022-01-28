@@ -13,4 +13,4 @@
 # limitations under the License.
 
 import nemo.collections.tts.helpers.helpers
-import nemo.collections.tts.helpers.text
+from nemo.collections.tts.helpers.text import cleaners, acronyms, cmudict, datestime, numbers, symbols
