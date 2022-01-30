@@ -274,9 +274,11 @@ class FlowtronModel(SpectrogramGenerator):
         in_lens, out_lens = in_lens.cuda(), out_lens.cuda()
         gate_target = gate_target.cuda()
         attn_prior = attn_prior.cuda() if attn_prior is not None else None
-        (z, log_s_list, gate_pred, attn, attn_logprob,
-            mean, log_var, prob) = self.forward(
-            mel, spk_ids, txt, in_lens, out_lens, attn_prior)
+        
+        with torch.no_grad():
+            (z, log_s_list, gate_pred, attn, attn_logprob,
+                mean, log_var, prob) = self.forward(
+                mel, spk_ids, txt, in_lens, out_lens, attn_prior)
 
         loss_nll, loss_gate, loss_ctc = self.criterion(
             (z, log_s_list, gate_pred, attn,
@@ -287,11 +289,16 @@ class FlowtronModel(SpectrogramGenerator):
         if self.apply_ctc:
             loss += loss_ctc * self.criterion.ctc_loss_weight
 
+        # reduced_loss = loss.item()
+        # reduced_gate_loss = loss_gate.item()
+        # reduced_mle_loss = loss_nll.item()
+        # reduced_ctc_loss = loss_ctc.item()
+
         return {
             "val_loss": loss,
-            "val_loss_nll": loss_nll,
-            "val_loss_gate": loss_gate,
-            "val_loss_ctc": loss_ctc
+            # "val_loss_nll": reduced_mle_loss,
+            # "val_loss_gate": reduced_gate_loss,
+            # "val_loss_ctc": reduced_ctc_loss
         }
 
     def validation_epoch_end(self, outputs, dataloader_idx: int = 0):
