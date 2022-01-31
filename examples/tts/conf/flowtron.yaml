@@ -53,8 +53,8 @@ model:
     n_mel_channels: ${model.gaussianmixture.n_mel_channels}
     n_speaker_dim: ${model.n_speaker_dim}
     n_text_dim: ${model.n_text_dim}
-    n_hidden: 640
-    n_attn_channels: 1024
+    n_hidden: 1024
+    n_attn_channels: 640
     n_lstm_layers: 2
     use_cumm_attention: false
 

@@ -222,6 +222,7 @@ class FlowtronModel(SpectrogramGenerator):
         self._validation_dl = torch.utils.data.DataLoader(valset, collate_fn=collate_fn, **val_data_config.dataloader_params)
   
     def training_step(self, batch, batch_idx): 
+        
         (mel, spk_ids, txt, in_lens, out_lens,
             gate_target, attn_prior) = batch
         mel, spk_ids, txt = mel.cuda(), spk_ids.cuda(), txt.cuda()
@@ -267,6 +268,7 @@ class FlowtronModel(SpectrogramGenerator):
         return output
 
     def validation_step(self, batch, batch_idx):
+        
         (mel, spk_ids, txt, in_lens, out_lens,
             gate_target, attn_prior) = batch
         
@@ -289,16 +291,16 @@ class FlowtronModel(SpectrogramGenerator):
         if self.apply_ctc:
             loss += loss_ctc * self.criterion.ctc_loss_weight
 
-        # reduced_loss = loss.item()
-        # reduced_gate_loss = loss_gate.item()
-        # reduced_mle_loss = loss_nll.item()
-        # reduced_ctc_loss = loss_ctc.item()
+        reduced_loss = loss.item()
+        reduced_gate_loss = loss_gate.item()
+        reduced_mle_loss = loss_nll.item()
+        reduced_ctc_loss = loss_ctc.item()
 
         return {
             "val_loss": loss,
-            # "val_loss_nll": reduced_mle_loss,
-            # "val_loss_gate": reduced_gate_loss,
-            # "val_loss_ctc": reduced_ctc_loss
+            "val_loss_nll": reduced_mle_loss,
+            "val_loss_gate": reduced_gate_loss,
+            "val_loss_ctc": reduced_ctc_loss
         }
 
     def validation_epoch_end(self, outputs, dataloader_idx: int = 0):
@@ -316,6 +318,8 @@ class FlowtronModel(SpectrogramGenerator):
         else:
             print("Unrecognized optimizer %s!" % (self._cfg.optim_algo))
             exit(1)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = self._cfg.learning_rate
         return optimizer
 
     def generate_spectrogram(self, tokens: 'torch.tensor', **kwargs) -> 'torch.tensor':

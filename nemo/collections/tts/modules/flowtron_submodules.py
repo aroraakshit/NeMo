@@ -690,7 +690,7 @@ class RAdam(Optimizer):
         """
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         self.buffer = [[None, None, None] for _ in range(10)]
-        super(RAdam, self).__init__(params, defaults)
+        super().__init__(params, defaults)
 
     def step(self, closure=None):
 
