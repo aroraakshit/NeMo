@@ -305,6 +305,7 @@ class FlowtronModel(SpectrogramGenerator):
 
     def validation_epoch_end(self, outputs, dataloader_idx: int = 0):
         val_loss_mean = torch.stack([x['val_loss'] for x in outputs]).mean()
+        self.log('val_loss', val_loss_mean)
         return {'val_loss': val_loss_mean}
 
     def configure_optimizers(self):
