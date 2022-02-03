@@ -196,14 +196,15 @@ class FlowtronModel(SpectrogramGenerator):
         This method returns a list of pre-trained model which can be instantiated directly from NVIDIA's NGC cloud.
         Returns:
             List of available pre-trained models.
+        #TODO: this will not work until NGC public URL is fed here. Or we could point the URL to a GCS bucket. 
         """
         list_of_models = []
         model = PretrainedModelInfo(
-            pretrained_model_name="",
-            location="",
-            description="",
+            pretrained_model_name="Flowtron",
+            location="https://prod-model-registry-ngc-bucket.s3.us-west-2.amazonaws.com/org/nvidian/team/sae/models/flowtron/versions/1.5.1/files.zip?response-content-disposition=attachment%3B%20filename%3D%22files.zip%22&response-content-type=application%2Fzip&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEDcaCXVzLXdlc3QtMSJIMEYCIQDNX6R58ee2NBnt2iWjd2E7%2FVDbGAEf4DNhXtSnZ0y3PQIhAOzZt9AJ57HBlDgeI9RNHxR10K9IRxdIsOjKxIiIf91nKvoDCHAQAxoMNzg5MzYzMTM1MDI3IgykdLXIJ3U3Qmg3S%2FEq1wNpPu5Qdju2aZVG0a6O9NhQ2XMnTMxVoGHlUzYOa0B2NzB8l3WPaCPegSrR4MJl048VQ2wFXgrNeeCA0c93mFoEMBafFC0DOVwVzca50OLMWSWeILXuDMdeAElAQEiJrSbMY9o5GYhIRoKoCKxtxWknJlM62FvOLQO3HeTt00XBxQrj%2F7WXq7CL4tShwJWK1OKilj2paeUoRn0xukTP356QvY5%2FLqs3flN6TlmellQ3YnDMmOnHCgFn5dOzgO8aJEJBjXkDV0Ns4gbnPq%2FmTBjtfroVSz2ID8A9Kq9dVxb5NEFvKaj%2FOQIeH9P8DWxlthAQKFEb3o5%2FDO6dw%2FpbSmWBlf%2FWO8XC0om5ydpGPBDMXqRsgDtbFd4nKGBAcKV7Ocn51%2Fyq5zRk63n%2Bo9SHR%2BTTlyEobRNqrooGpdBJYOo%2FsIpc2bm0sqZlPExJUAs8EVXTi7di59hPvf0NSzBXY%2Bb21Jr3Q0PhJ8AIAC9PDRxIVPZzNgZyrgs8c%2FBRLOyTKThBFTs30ShH9swXS2jJoKp11HXpMtXqtRLj%2FK2unqUr%2FNwfNnL%2BCYTiFNoBm5KLaMzWJK2rpH%2BMC6s8JpWBPprPmoqy70DbpSCdS865gt%2FyPZ762yL3nEYw2fvtjwY6pAG%2FLMderRTrq3%2Bk9N6UbK7PLC%2BABkKpdqAg%2F7cm8sysHkTA3cEEzLdzi0GzArqK8UGDEskj5sNebFCAC2FuN94x79h50nAYRSrLIsC1foEOTsbdkhh9E0hoXJtJbCSsXu%2FPKrkZcdQ2c7J%2BQSts306e1xGLOuzrc5JmfSQODSZ4WXPco1%2BL9vt0Upw%2FqUlngPE3z2nrxlHbf9aKnCLVoFh6e8a16Q%3D%3D&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20220203T081231Z&X-Amz-SignedHeaders=host&X-Amz-Expires=3599&X-Amz-Credential=ASIA3PSNVSIZT2D7OXMQ%2F20220203%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Signature=3424e0aeee903038fec173134ff8c4082a5d599d8e80923745f919251dc625ac",
+            description="This model is trained on LJSpeech sampled at 22050Hz.",
             class_=cls,
-            aliases=[""],
+            aliases=["flowtron"],
         )
         list_of_models.append(model)
         return list_of_models
