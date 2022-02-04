@@ -16,14 +16,14 @@ from nemo.collections.tts.losses.flowtronloss import FlowtronLoss
 from nemo.collections.tts.modules.flowtron_submodules import ARStep, ARBackStep, RAdam
 from nemo.core.neural_types.neural_type import NeuralType
 from nemo.core.neural_types.elements import (
-    AudioSignal,
+    EmbeddedTextType,
     TokenIndex,
     LengthsType,
     LogitsType,
     ProbsType,
     VoidType,
     MelSpectrogramType,
-    SequenceToSequenceAlignmentType,
+    LogprobsType
 )
 from nemo.core.classes.common import typecheck
 
@@ -128,10 +128,10 @@ class FlowtronModel(SpectrogramGenerator):
     def output_types(self):
         return {
             "mel": NeuralType(('T', 'B', 'D'), MelSpectrogramType()),
-            "log_s_list": [NeuralType(('B', 'flowgroup', 'T'), VoidType())],
+            "log_s_list": [NeuralType(('T', 'B', 'D'), VoidType())],
             "gate": NeuralType(('T', 'B', 'D'), LogitsType()),
-            "attns_list": [NeuralType(('B', 'flowgroup', 'T_text'), VoidType())],
-            "attns_logprob_list": [NeuralType(('B', 'flowgroup', 'T_text'), VoidType())],
+            "attns_list": [NeuralType(('B', 'T', 'T_text'), VoidType())],
+            "attns_logprob_list": [NeuralType(('B', 'T', 'T_text'), LogprobsType())],
             "mean": NeuralType(('B'), LengthsType()),
             "log_var": NeuralType(('B'), LengthsType()), 
             "prob": NeuralType(('B'), ProbsType()),
@@ -143,11 +143,11 @@ class FlowtronModel(SpectrogramGenerator):
         speaker_ids = speaker_ids*0 if self.dummy_speaker_embedding else speaker_ids
         speaker_vecs = self.speaker_embedding(speaker_ids)
         text = self.embedding(text).transpose(1, 2)
-        text = self.encoder(text, in_lens)
+        text = self.encoder(x=text, in_lens=in_lens)
 
         mean, log_var, prob = None, None, None
         if hasattr(self, 'gaussian_mixture'):
-            mel_embedding = self.mel_encoder(mel, out_lens)
+            mel_embedding = self.mel_encoder(x=mel, lens=out_lens)
             mean, log_var, prob = self.gaussian_mixture(
                 mel_embedding, mel_embedding.size(0))
 
@@ -162,7 +162,7 @@ class FlowtronModel(SpectrogramGenerator):
         mask = ~get_mask_from_lengths(in_lens)[..., None]
         for i, flow in enumerate(self.flows):
             mel, log_s, gate, attn_out, attn_logprob_out = flow(
-                mel, encoder_outputs, mask, out_lens, attn_prior)
+                mel=mel, text=encoder_outputs, mask=mask, out_lens=out_lens, attn_prior=attn_prior)
             log_s_list.append(log_s)
             attns_list.append(attn_out)
             attns_logprob_list.append(attn_logprob_out)
@@ -276,9 +276,9 @@ class FlowtronModel(SpectrogramGenerator):
             mel=mel, speaker_ids=spk_ids, text=txt, in_lens=in_lens, out_lens=out_lens, attn_prior=attn_prior)
 
         loss_nll, loss_gate, loss_ctc = self.criterion(
-            (z, log_s_list, gate_pred, attn,
-                attn_logprob, mean, log_var, prob),
-            gate_target, in_lens, out_lens, is_validation=False)
+            z=z, log_s_list=log_s_list, gate_pred=gate_pred, attn_list=attn,
+                attn_logprob=attn_logprob, mean=mean, log_var=log_var, prob=prob,
+            gate_target=gate_target, in_lengths=in_lens, out_lengths=out_lens, is_validation=False)
         
         loss = loss_nll + loss_gate
 
@@ -321,9 +321,9 @@ class FlowtronModel(SpectrogramGenerator):
                 mel=mel, speaker_ids=spk_ids, text=txt, in_lens=in_lens, out_lens=out_lens, attn_prior=attn_prior)
 
         loss_nll, loss_gate, loss_ctc = self.criterion(
-            (z, log_s_list, gate_pred, attn,
-                attn_logprob, mean, log_var, prob),
-            gate_target, in_lens, out_lens, is_validation=True)
+            z=z, log_s_list=log_s_list, gate_pred=gate_pred, attn_list=attn,
+                attn_logprob=attn_logprob, mean=mean, log_var=log_var, prob=prob,
+            gate_target=gate_target, in_lengths=in_lens, out_lengths=out_lens, is_validation=True)
         loss = loss_nll + loss_gate
 
         if self.apply_ctc:
@@ -361,7 +361,11 @@ class FlowtronModel(SpectrogramGenerator):
             param_group['lr'] = self._cfg.learning_rate
         return optimizer
 
-    def generate_spectrogram(self, tokens: 'torch.tensor', **kwargs) -> 'torch.tensor':
+    @typecheck(
+        input_types={"tokens": NeuralType(('B', 'T'), EmbeddedTextType())},
+        output_types={"spectrogram_pred": NeuralType(('B', 'D', 'T'), MelSpectrogramType())},
+    )
+    def generate_spectrogram(self, tokens, **kwargs):
         speaker_vecs = self.speaker_vecs[None]
         text = tokens[None]
         residual = torch.cuda.FloatTensor(1, 80, 400).normal_() * 0.5

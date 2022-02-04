@@ -10,7 +10,13 @@ from nemo.collections.tts.modules.submodules import ConvNorm, LinearNorm
 from nemo.core.classes import NeuralModule, typecheck
 from nemo.core.neural_types.elements import (
     EmbeddedTextType,
-    LengthsType
+    LengthsType,
+    MaskType,
+    MelSpectrogramType,
+    ProbsType,
+    VoidType,
+    LogprobsType,
+    LogitsType
 )
 from nemo.core.neural_types.neural_type import NeuralType
 
@@ -54,20 +60,20 @@ class Encoder(NeuralModule):
             encoder_embedding_dim, int(encoder_embedding_dim / 2), 1, batch_first=True, bidirectional=True
         )
 
-    # @property
-    # def input_types(self):
-    #     return {
-    #         "x": NeuralType(('B', 'D', 'T'), EmbeddedTextType()),
-    #         "in_lens": NeuralType(('B'), LengthsType())
-    #     }
+    @property
+    def input_types(self):
+        return {
+            "x": NeuralType(('B', 'D', 'T_text'), EmbeddedTextType()),
+            "in_lens": NeuralType(('B'), LengthsType())
+        }
     
-    # @property
-    # def output_types(self):
-    #     return {
-    #         "encoder_embedding": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
-    #     }
+    @property
+    def output_types(self):
+        return {
+            "outputs": NeuralType(('B', 'T_text', 'D'), EmbeddedTextType()),
+        }
     
-    # @typecheck()
+    @typecheck()
     def forward(self, x, in_lens):
         if x.size()[0] > 1:
             x_embedded = []
@@ -182,20 +188,20 @@ class MelEncoder(NeuralModule):
         return hidden_vectors
 
 
-    @property
-    def input_types(self):
-        return {
-            "x": NeuralType(('B', 'D', 'T'), EmbeddedTextType()),
-            "lens": NeuralType(('B'), LengthsType())
-        }
+    # @property
+    # def input_types(self):
+    #     return {
+    #         "x": NeuralType(('B', 'D', 'T'), MelSpectrogramType()),
+    #         "lens": NeuralType(('B'), LengthsType())
+    #     }
     
-    @property
-    def output_types(self):
-        return {
-            "encoder_embedding": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
-        }
+    # @property
+    # def output_types(self):
+    #     return {
+    #         "x": NeuralType(('B', 'T_text', 'D'), EmbeddedTextType()),
+    #     }
     
-    @typecheck()
+    # @typecheck()
     def forward(self, x, lens):
         if x.size()[0] > 1:
             x_embedded = []
@@ -291,23 +297,23 @@ class GaussianMixture(NeuralModule):
     def generate_prob(self):
         return torch.ones(1, 1).float()
 
-    #TODO: correct the input and output types
-    @property
-    def input_types(self):
-        return {
-            "outputs": NeuralType(('B', 'D', 'T'), EmbeddedTextType()),
-            "bs": NeuralType(('B'), LengthsType()),
-        }
+    # #TODO: correct the input and output types
+    # @property
+    # def input_types(self):
+    #     return {
+    #         "outputs": NeuralType(('B', 'D', 'T'), EmbeddedTextType()),
+    #         "bs": NeuralType(('B'), LengthsType()),
+    #     }
 
-    @property
-    def output_types(self):
-        return {
-            "mean": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
-            "log_var": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
-            "prob": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
-        }
+    # @property
+    # def output_types(self):
+    #     return {
+    #         "mean": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
+    #         "log_var": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
+    #         "prob": NeuralType(('B', 'T', 'D'), EmbeddedTextType()),
+    #     }
 
-    @typecheck()
+    # @typecheck()
     def forward(self, outputs, bs):
         prob = torch.softmax(self.prob_layer(outputs), dim=1)
 
@@ -520,6 +526,27 @@ class ARStep(NeuralModule):
                 'attention_weights': attention_weights_all,
                 'attention_logprobs': attention_logprobs_all}
 
+    @property
+    def input_types(self):
+        return {
+            "mel": NeuralType(('T', 'B', 'D'), MelSpectrogramType()),
+            "text": NeuralType(('T_text', 'B', 'D'), EmbeddedTextType()),
+            "mask": NeuralType(('B', 'T', 'D'), MaskType()),
+            "out_lens": NeuralType(('B'), LengthsType()),
+            "attn_prior": NeuralType(('B', 'T_spec', 'T_text'), ProbsType(), optional=True),
+        }
+    
+    @property
+    def output_types(self):
+        return {
+            "mel": NeuralType(('T', 'B', 'D'), MelSpectrogramType()),
+            "log_s": NeuralType(('T', 'B', 'D'), VoidType()),
+            "gates": NeuralType(('T', 'B', 'D'), LogitsType()),
+            "attention_weights": NeuralType(('B', 'T', 'T_text'), VoidType()),
+            "attention_logprobs": NeuralType(('B', 'T', 'T_text'), LogprobsType()),
+        }
+    
+    @typecheck()
     def forward(self, mel, text, mask, out_lens, attn_prior=None):
         dummy = torch.FloatTensor(1, mel.size(1), mel.size(2)).zero_()
         dummy = dummy.type(mel.type())
@@ -634,6 +661,27 @@ class ARBackStep(NeuralModule):
                                n_attn_channels, n_lstm_layers, add_gate,
                                use_cumm_attention)
 
+    @property
+    def input_types(self):
+        return {
+            "mel": NeuralType(('T', 'B', 'D'), MelSpectrogramType()),
+            "text": NeuralType(('T_text', 'B', 'D'), EmbeddedTextType()),
+            "mask": NeuralType(('B', 'T', 'D'), MaskType()),
+            "out_lens": NeuralType(('B'), LengthsType()),
+            "attn_prior": NeuralType(('B', 'T_spec', 'T_text'), ProbsType(), optional=True),
+        }
+    
+    @property
+    def output_types(self):
+        return {
+            "mel": NeuralType(('T', 'B', 'D'), MelSpectrogramType()),
+            "log_s": NeuralType(('T', 'B', 'D'), VoidType()),
+            "gates": NeuralType(('T', 'B', 'D'), LogitsType()),
+            "attention_weights": NeuralType(('B', 'T', 'T_text'), VoidType()),
+            "attention_logprobs": NeuralType(('B', 'T', 'T_text'), LogprobsType()),
+        }
+    
+    @typecheck()
     def forward(self, mel, text, mask, out_lens, attn_prior=None):
         mel = torch.flip(mel, (0, ))
         if attn_prior is not None:
@@ -645,7 +693,7 @@ class ARBackStep(NeuralModule):
                 attn_prior[k] = attn_prior[k].roll(out_lens[k].item(), dims=0)
 
         mel, log_s, gates, attn_out, attention_logprobs = self.ar_step(
-            mel, text, mask, out_lens, attn_prior)
+            mel=mel, text=text, mask=mask, out_lens=out_lens, attn_prior=attn_prior)
 
         # move padded zeros back to beginning
         for k in range(mel.size(1)):

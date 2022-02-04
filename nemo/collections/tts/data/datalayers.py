@@ -982,15 +982,18 @@ class STFT(torch.nn.Module):
 
 class FlowtronData(Dataset):
 
-    # @property
-    # def output_types(self) -> Optional[Dict[str, NeuralType]]:
-    #     """Returns definitions of module output ports."""
-    #     return {
-    #         'mel': NeuralType(('B', 'C', 'D', 'T'), SpectrogramType()),
-    #         'speaker_id': NeuralType(('any'), IntType()),
-    #         'text_encoded': NeuralType(None, LengthsType()),
-    #         'attn_prior': NeuralType(('B', 'C', 'D', 'T'), SpectrogramType()),
-    #     }
+    @property
+    def output_types(self) -> Optional[Dict[str, NeuralType]]:
+        """Returns definitions of module output ports."""
+        return {
+            'mel_padded': NeuralType(('B', 'D', 'T'), MelSpectrogramType()),
+            'speaker_ids': NeuralType(('B'), LengthsType()),
+            'text_padded': NeuralType(('B', 'T_text'), TokenIndex()),
+            'input_lengths': NeuralType(('B'), LengthsType()),
+            'output_lengths': NeuralType(('B'), LengthsType()),
+            'gate_padded': NeuralType(('B', 'T'), LogitsType()),
+            'attn_prior_padded': NeuralType(('B', 'T_spec', 'T_text'), ProbsType()),
+        }
 
     def __init__(self, manifest_filepath, filter_length, hop_length, win_length,
                  sampling_rate, mel_fmin, mel_fmax, max_wav_value, p_arpabet,

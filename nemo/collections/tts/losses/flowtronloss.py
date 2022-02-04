@@ -4,6 +4,18 @@ from transformers import LogitsProcessorList
 
 from nemo.collections.tts.helpers.helpers import get_mask_from_lengths
 from nemo.core.classes import Loss
+from nemo.core.neural_types.neural_type import NeuralType
+from nemo.core.neural_types.elements import (
+    ProbsType,
+    LengthsType,
+    LogitsType,
+    LogprobsType,
+    VoidType,
+    MelSpectrogramType,
+    LossType,
+    BoolType
+)
+from nemo.core.classes.common import typecheck
 
 class AttentionCTCLoss(Loss):
     def __init__(self, blank_logprob=-1):
@@ -50,11 +62,36 @@ class FlowtronLoss(Loss):
         self.attention_loss = AttentionCTCLoss(
             blank_logprob=self.blank_logprob)
 
-    def forward(self, model_output, gate_target,
-                in_lengths, out_lengths, is_validation=False):
-        z, log_s_list, gate_pred, attn_list, attn_logprob_list, \
-            mean, log_var, prob = model_output
+    @property
+    def input_types(self):
+        return {
+            "z": NeuralType(('T', 'B', 'D'), MelSpectrogramType()),
+            "log_s_list": [NeuralType(('T', 'B', 'D'), VoidType())],
+            "gate_pred": NeuralType(('T', 'B', 'D'), LogitsType()),
+            "attn_list": [NeuralType(('B', 'T', 'T_text'), VoidType())],
+            "attn_logprob": [NeuralType(('B', 'T', 'T_text'), LogprobsType())],
+            "mean": NeuralType(('B'), LengthsType()),
+            "log_var": NeuralType(('B'), LengthsType()), 
+            "prob": NeuralType(('B'), ProbsType()),
+            "gate_target": NeuralType(('B', 'T'), LogitsType()),
+            "in_lengths": NeuralType(('B'), LengthsType()),
+            "out_lengths": NeuralType(('B'), LengthsType()),
+            "is_validation": NeuralType(elements_type=BoolType(), optional=True),
+        }
 
+    @property
+    def output_types(self):
+        return {
+            "loss": NeuralType(elements_type=LossType()),
+            "gate_loss": NeuralType(elements_type=LossType()),
+            "loss_ctc": NeuralType(elements_type=LossType()),
+        }
+
+    @typecheck()
+    def forward(self, z, log_s_list, gate_pred, attn_list,
+                attn_logprob, mean, log_var, prob, gate_target,
+                in_lengths, out_lengths, is_validation=False):
+        attn_logprob_list = attn_logprob
         # create mask for outputs computed on padded data
         mask = get_mask_from_lengths(out_lengths).transpose(0, 1)[..., None]
         mask_inverse = ~mask
