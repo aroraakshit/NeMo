@@ -14,7 +14,17 @@ from nemo.collections.tts.models.base import SpectrogramGenerator
 from nemo.core.classes.common import PretrainedModelInfo
 from nemo.collections.tts.losses.flowtronloss import FlowtronLoss
 from nemo.collections.tts.modules.flowtron_submodules import ARStep, ARBackStep, RAdam
-from nemo.collections.tts.data.datalayers import FlowtronDataCollate, FlowtronData
+from nemo.core.neural_types.neural_type import NeuralType
+from nemo.core.neural_types.elements import (
+    AudioSignal,
+    TokenIndex,
+    LengthsType,
+    LogitsType,
+    ProbsType,
+    VoidType,
+    MelSpectrogramType,
+    SequenceToSequenceAlignmentType,
+)
 from nemo.core.classes.common import typecheck
 
 @dataclass
@@ -97,7 +107,38 @@ class FlowtronModel(SpectrogramGenerator):
         self.iteration = 0
         self.apply_ctc = False
     
-    def forward(self, mel, speaker_ids, text, in_lens, out_lens,
+    def parse(self, str_input: str, **kwargs) -> 'torch.tensor':
+        trainset = instantiate(self._cfg.train_ds.dataset)
+        self.speaker_vecs = trainset.get_speaker_id(kwargs['speaker_id']).cuda()
+        text = trainset.get_text(str_input).cuda()
+        return text
+
+    @property
+    def input_types(self):
+        return {
+            "mel": NeuralType(('B', 'D', 'T'), MelSpectrogramType()),
+            "speaker_ids": NeuralType(('B'), LengthsType()),
+            "text": NeuralType(('B', 'T_text'), TokenIndex()),
+            "in_lens": NeuralType(('B'), LengthsType()),
+            "out_lens": NeuralType(('B'), LengthsType()),
+            "attn_prior": NeuralType(('B', 'T_spec', 'T_text'), ProbsType(), optional=True),
+        }
+
+    @property
+    def output_types(self):
+        return {
+            "mel": NeuralType(('T', 'B', 'D'), MelSpectrogramType()),
+            "log_s_list": [NeuralType(('B', 'flowgroup', 'T'), VoidType())],
+            "gate": NeuralType(('T', 'B', 'D'), LogitsType()),
+            "attns_list": [NeuralType(('B', 'flowgroup', 'T_text'), VoidType())],
+            "attns_logprob_list": [NeuralType(('B', 'flowgroup', 'T_text'), VoidType())],
+            "mean": NeuralType(('B'), LengthsType()),
+            "log_var": NeuralType(('B'), LengthsType()), 
+            "prob": NeuralType(('B'), ProbsType()),
+        }
+
+    @typecheck()
+    def forward(self, *, mel, speaker_ids, text, in_lens, out_lens,
                 attn_prior=None):
         speaker_ids = speaker_ids*0 if self.dummy_speaker_embedding else speaker_ids
         speaker_vecs = self.speaker_embedding(speaker_ids)
@@ -173,9 +214,9 @@ class FlowtronModel(SpectrogramGenerator):
         """
         mel, attn_weights = self.infer(residual, speaker_ids, text)
         in_lens = torch.LongTensor([text.shape[1]]).cuda()
-        residual_recon, log_s_list, gate, _, _, _, _ = self.forward(mel,
-                                                                    speaker_ids, text,
-                                                                    in_lens, None)
+        residual_recon, log_s_list, gate, _, _, _, _ = self.forward(mel=mel,
+                                                                    speaker_ids=speaker_ids, text=text,
+                                                                    in_lens=in_lens, out_lens=None)
         residual_permuted = residual.permute(2, 0, 1)
         if len(self.flows) % 2 == 0:
             residual_permuted = torch.flip(residual_permuted, (0,))
@@ -210,17 +251,13 @@ class FlowtronModel(SpectrogramGenerator):
         return list_of_models
     
     def setup_training_data(self, train_data_config: OmegaConf):
-        trainset = instantiate(train_data_config.dataset)
-        collate_fn = FlowtronDataCollate(
-            n_frames_per_step=1, use_attn_prior=trainset.use_attn_prior)
-        self._train_dl = torch.utils.data.DataLoader(trainset, collate_fn=collate_fn, **train_data_config.dataloader_params)
+        trainset = instantiate(train_data_config.dataset)            
+        self._train_dl = torch.utils.data.DataLoader(trainset, collate_fn=trainset._collate_fn_, **train_data_config.dataloader_params)
   
     def setup_validation_data(self, val_data_config: OmegaConf):
         # Get data, data loaders and 1ollate function ready
         valset = instantiate(val_data_config.dataset)
-        collate_fn = FlowtronDataCollate(
-            n_frames_per_step=1, use_attn_prior=valset.use_attn_prior)
-        self._validation_dl = torch.utils.data.DataLoader(valset, collate_fn=collate_fn, **val_data_config.dataloader_params)
+        self._validation_dl = torch.utils.data.DataLoader(valset, collate_fn=valset._collate_fn_, **val_data_config.dataloader_params)
   
     def training_step(self, batch, batch_idx): 
         
@@ -236,7 +273,7 @@ class FlowtronModel(SpectrogramGenerator):
         
         (z, log_s_list, gate_pred, attn,
             attn_logprob, mean, log_var, prob) = self.forward(
-            mel, spk_ids, txt, in_lens, out_lens, attn_prior)
+            mel=mel, speaker_ids=spk_ids, text=txt, in_lens=in_lens, out_lens=out_lens, attn_prior=attn_prior)
 
         loss_nll, loss_gate, loss_ctc = self.criterion(
             (z, log_s_list, gate_pred, attn,
@@ -281,7 +318,7 @@ class FlowtronModel(SpectrogramGenerator):
         with torch.no_grad():
             (z, log_s_list, gate_pred, attn, attn_logprob,
                 mean, log_var, prob) = self.forward(
-                mel, spk_ids, txt, in_lens, out_lens, attn_prior)
+                mel=mel, speaker_ids=spk_ids, text=txt, in_lens=in_lens, out_lens=out_lens, attn_prior=attn_prior)
 
         loss_nll, loss_gate, loss_ctc = self.criterion(
             (z, log_s_list, gate_pred, attn,
@@ -330,9 +367,3 @@ class FlowtronModel(SpectrogramGenerator):
         residual = torch.cuda.FloatTensor(1, 80, 400).normal_() * 0.5
         spectrogram_pred = self.infer(residual, speaker_vecs, text, gate_threshold=0.5)
         return spectrogram_pred
-
-    def parse(self, str_input: str, **kwargs) -> 'torch.tensor':
-        trainset = instantiate(self._cfg.train_ds.dataset)
-        self.speaker_vecs = trainset.get_speaker_id(kwargs['speaker_id']).cuda()
-        text = trainset.get_text(str_input).cuda()
-        return text

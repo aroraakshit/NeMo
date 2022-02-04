@@ -775,6 +775,7 @@ class FastSpeech2Dataset(Dataset):
 
 def beta_binomial_prior_distribution(phoneme_count, mel_count,
                                      scaling_factor=1.0):
+    """ #TODO """
     P, M = phoneme_count, mel_count
     x = np.arange(0, P)
     mel_text_probs = []
@@ -787,6 +788,7 @@ def beta_binomial_prior_distribution(phoneme_count, mel_count,
 
 
 def load_filepaths_and_text(filelist, split="|"):
+    """ Reads the filelist and creates a list filepaths to wav files and their corresponding text """
     if isinstance(filelist, str):
         with open(filelist, encoding='utf-8') as f:
             filepaths_and_text = [line.strip().split(split) for line in f]
@@ -979,10 +981,21 @@ class STFT(torch.nn.Module):
 
 
 class FlowtronData(Dataset):
+
+    # @property
+    # def output_types(self) -> Optional[Dict[str, NeuralType]]:
+    #     """Returns definitions of module output ports."""
+    #     return {
+    #         'mel': NeuralType(('B', 'C', 'D', 'T'), SpectrogramType()),
+    #         'speaker_id': NeuralType(('any'), IntType()),
+    #         'text_encoded': NeuralType(None, LengthsType()),
+    #         'attn_prior': NeuralType(('B', 'C', 'D', 'T'), SpectrogramType()),
+    #     }
+
     def __init__(self, manifest_filepath, filter_length, hop_length, win_length,
                  sampling_rate, mel_fmin, mel_fmax, max_wav_value, p_arpabet,
                  cmudict_path, text_cleaners, speaker_ids=None,
-                 use_attn_prior=False, attn_prior_threshold=1e-4,
+                 use_attn_prior=False, n_frames_per_step=1, attn_prior_threshold=1e-4,
                  prior_cache_path="", betab_scaling_factor=1.0, randomize=True,
                  keep_ambiguous=False, seed=1234):
         self.max_wav_value = max_wav_value
@@ -991,6 +1004,7 @@ class FlowtronData(Dataset):
         self.betab_scaling_factor = betab_scaling_factor
         self.attn_prior_threshold = attn_prior_threshold
         self.keep_ambiguous = keep_ambiguous
+        self.n_frames_per_step = n_frames_per_step
 
         if speaker_ids is None or speaker_ids == '':
             self.speaker_ids = self.create_speaker_lookup_table(
@@ -1088,35 +1102,8 @@ class FlowtronData(Dataset):
         text_norm = torch.LongTensor(text_to_sequence(text))
         return text_norm
 
-    def __getitem__(self, index):
-        # Read audio and text
-        audiopath, text, speaker_id = self.audiopaths_and_text[index]
-        audio, sampling_rate = load_wav_to_torch(audiopath)
-        if sampling_rate != self.sampling_rate:
-            raise ValueError("{} SR doesn't match target {} SR".format(
-                sampling_rate, self.sampling_rate))
-
-        mel = self.get_mel(audio)
-        text_encoded = self.get_text(text)
-        speaker_id = self.get_speaker_id(speaker_id)
-        attn_prior = None
-        if self.use_attn_prior:
-            attn_prior = self.compute_attention_prior(
-                audiopath, mel.shape[1], text_encoded.shape[0])
-
-        return (mel, speaker_id, text_encoded, attn_prior)
-
-    def __len__(self):
-        return len(self.audiopaths_and_text)
-
-
-class FlowtronDataCollate():
-    """ Zero-pads model inputs and targets based on number of frames per step """
-    def __init__(self, n_frames_per_step=1, use_attn_prior=False):
-        self.n_frames_per_step = n_frames_per_step
-        self.use_attn_prior = use_attn_prior
-
-    def __call__(self, batch):
+    def _collate_fn_(self, batch):
+        """ Zero-pads model inputs and targets based on number of frames per step """
         """Collate's training batch from normalized text and mel-spectrogram """
         # Right zero-pad all one-hot text sequences to max input length
         input_lengths, ids_sorted_decreasing = torch.sort(
@@ -1166,3 +1153,25 @@ class FlowtronDataCollate():
 
         return (mel_padded, speaker_ids, text_padded, input_lengths,
                 output_lengths, gate_padded, attn_prior_padded)
+    
+    def __getitem__(self, index):
+        # Read audio and text
+        audiopath, text, speaker_id = self.audiopaths_and_text[index]
+        audio, sampling_rate = load_wav_to_torch(audiopath)
+        if sampling_rate != self.sampling_rate:
+            raise ValueError("{} SR doesn't match target {} SR".format(
+                sampling_rate, self.sampling_rate))
+
+        mel = self.get_mel(audio)
+        text_encoded = self.get_text(text)
+        speaker_id = self.get_speaker_id(speaker_id)
+        attn_prior = None
+        if self.use_attn_prior:
+            attn_prior = self.compute_attention_prior(
+                audiopath, mel.shape[1], text_encoded.shape[0])
+
+        return (mel, speaker_id, text_encoded, attn_prior)
+
+    def __len__(self):
+        return len(self.audiopaths_and_text)
+
