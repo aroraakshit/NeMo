@@ -111,7 +111,8 @@ class FlowtronModel(SpectrogramGenerator):
         trainset = instantiate(self._cfg.train_ds.dataset)
         self.speaker_vecs = trainset.get_speaker_id(kwargs['speaker_id']).cuda()
         text = trainset.get_text(str_input).cuda()
-        return text
+        text_tensor = text.unsqueeze_(0)
+        return text_tensor
 
     @property
     def input_types(self):
@@ -367,7 +368,6 @@ class FlowtronModel(SpectrogramGenerator):
     )
     def generate_spectrogram(self, tokens, **kwargs):
         speaker_vecs = self.speaker_vecs[None]
-        text = tokens[None]
         residual = torch.cuda.FloatTensor(1, 80, 400).normal_() * 0.5
-        spectrogram_pred = self.infer(residual, speaker_vecs, text, gate_threshold=0.5)
+        spectrogram_pred, _ = self.infer(residual, speaker_vecs, tokens, gate_threshold=0.5)
         return spectrogram_pred
