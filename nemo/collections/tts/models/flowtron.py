@@ -95,7 +95,7 @@ class FlowtronModel(SpectrogramGenerator):
         torch.manual_seed(self._cfg.seed)
         torch.cuda.manual_seed(self._cfg.seed)
 
-        self.criterion = FlowtronLoss(gate_loss=bool(self._cfg.n_components), **self._cfg.flowtronloss)
+        self.criterion = FlowtronLoss(gm_loss=bool(self._cfg.n_components), **self._cfg.flowtronloss)
 
         if len(self._cfg.finetune_layers):
             for name, param in self.named_parameters():
@@ -288,7 +288,7 @@ class FlowtronModel(SpectrogramGenerator):
 
         reduced_loss = loss.item()
         reduced_gate_loss = loss_gate.item()
-        reduced_mle_loss = loss_nll.item()
+        reduced_nll_loss = loss_nll.item()
         reduced_ctc_loss = loss_ctc.item()
         
         output = {
@@ -297,7 +297,7 @@ class FlowtronModel(SpectrogramGenerator):
             'log': {
                 'loss': reduced_loss, 
                 'gate_loss': reduced_gate_loss, 
-                'mle_loss': reduced_mle_loss, 
+                'nll_loss': reduced_nll_loss, 
                 'ctc_loss': reduced_ctc_loss
             },
         }
@@ -332,12 +332,12 @@ class FlowtronModel(SpectrogramGenerator):
 
         reduced_loss = loss.item()
         reduced_gate_loss = loss_gate.item()
-        reduced_mle_loss = loss_nll.item()
+        reduced_nll_loss = loss_nll.item()
         reduced_ctc_loss = loss_ctc.item()
 
         return {
             "val_loss": loss,
-            "val_loss_nll": reduced_mle_loss,
+            "val_loss_nll": reduced_nll_loss,
             "val_loss_gate": reduced_gate_loss,
             "val_loss_ctc": reduced_ctc_loss
         }

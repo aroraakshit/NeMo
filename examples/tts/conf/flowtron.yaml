@@ -103,6 +103,7 @@ model:
     ctc_loss_weight: 0.01
     use_ctc_loss: true
     blank_logprob: -8
+    gate_loss: True
 
   trainparams:
     ctc_loss_start_iter: 10000
