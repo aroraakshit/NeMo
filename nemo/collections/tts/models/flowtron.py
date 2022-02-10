@@ -8,13 +8,15 @@ from hydra.utils import instantiate
 from omegaconf import MISSING, DictConfig, OmegaConf
 from pytorch_lightning import Trainer
 from torch import nn
+import random
 
-from nemo.collections.tts.helpers.helpers import get_mask_from_lengths
+from nemo.collections.tts.helpers.helpers import get_mask_from_lengths, plot_alignment_to_numpy, plot_gate_outputs_to_numpy
 from nemo.collections.tts.models.base import SpectrogramGenerator
 from nemo.core.classes.common import PretrainedModelInfo
 from nemo.collections.tts.losses.flowtronloss import FlowtronLoss
 from nemo.collections.tts.modules.flowtron_submodules import ARStep, ARBackStep, RAdam
 from nemo.core.neural_types.neural_type import NeuralType
+from pytorch_lightning.loggers import LoggerCollection, TensorBoardLogger
 from nemo.core.neural_types.elements import (
     EmbeddedTextType,
     TokenIndex,
@@ -107,6 +109,20 @@ class FlowtronModel(SpectrogramGenerator):
         self.iteration = 0
         self.apply_ctc = False
     
+    @property
+    def tb_logger(self):
+        if self._tb_logger is None:
+            if self.logger is None and self.logger.experiment is None:
+                return None
+            tb_logger = self.logger.experiment
+            if isinstance(self.logger, LoggerCollection):
+                for logger in self.logger:
+                    if isinstance(logger, TensorBoardLogger):
+                        tb_logger = logger.experiment
+                        break
+            self._tb_logger = tb_logger
+        return self._tb_logger
+
     def parse(self, str_input: str, **kwargs) -> 'torch.tensor':
         trainset = instantiate(self._cfg.train_ds.dataset)
         self.speaker_vecs = trainset.get_speaker_id(kwargs['speaker_id']).cuda()
@@ -321,19 +337,39 @@ class FlowtronModel(SpectrogramGenerator):
                 mean, log_var, prob) = self.forward(
                 mel=mel, speaker_ids=spk_ids, text=txt, in_lens=in_lens, out_lens=out_lens, attn_prior=attn_prior)
 
-        loss_nll, loss_gate, loss_ctc = self.criterion(
-            z=z, log_s_list=log_s_list, gate_pred=gate_pred, attn_list=attn,
-                attn_logprob=attn_logprob, mean=mean, log_var=log_var, prob=prob,
-            gate_target=gate_target, in_lengths=in_lens, out_lengths=out_lens, is_validation=True)
-        loss = loss_nll + loss_gate
+            loss_nll, loss_gate, loss_ctc = self.criterion(
+                z=z, log_s_list=log_s_list, gate_pred=gate_pred, attn_list=attn,
+                    attn_logprob=attn_logprob, mean=mean, log_var=log_var, prob=prob,
+                gate_target=gate_target, in_lengths=in_lens, out_lengths=out_lens, is_validation=True)
+            loss = loss_nll + loss_gate
 
-        if self.apply_ctc:
-            loss += loss_ctc * self.criterion.ctc_loss_weight
+            if self.apply_ctc:
+                loss += loss_ctc * self.criterion.ctc_loss_weight
 
-        reduced_loss = loss.item()
-        reduced_gate_loss = loss_gate.item()
-        reduced_nll_loss = loss_nll.item()
-        reduced_ctc_loss = loss_ctc.item()
+            reduced_loss = loss.item()
+            reduced_gate_loss = loss_gate.item()
+            reduced_nll_loss = loss_nll.item()
+            reduced_ctc_loss = loss_ctc.item()
+            
+        if self.logger is not None and self.logger.experiment is not None:
+            self._tb_logger = self.logger.experiment
+            idx = random.randint(0, len(gate_target) - 1)
+            for i in range(len(attn)):
+                self._tb_logger.add_image(
+                    'attention_weights_{}'.format(i),
+                    plot_alignment_to_numpy(attn[i][idx].data.cpu().numpy().T),
+                    self.iteration,
+                    dataformats='HWC'
+                )
+        
+            if gate_pred is not None:
+                gate_pred = gate_pred.transpose(0, 1)[:, :, 0]
+                self._tb_logger.add_image(
+                    "gate",
+                    plot_gate_outputs_to_numpy(
+                        gate_target[idx].data.cpu().numpy(),
+                        torch.sigmoid(gate_pred[idx]).data.cpu().numpy()),
+                    self.iteration, dataformats='HWC')
 
         return {
             "val_loss": loss,

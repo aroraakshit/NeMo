@@ -180,7 +180,9 @@ class MelEncoder(NeuralModule):
         # sort the data by decreasing length using provided index
         # we assume batch index is in dim=1
         padded_data = padded_data[:, sorted_idx]
-        padded_data = torch.nn.utils.rnn.pack_padded_sequence(padded_data, lens)
+
+        # lens argument to cpu because of: https://github.com/pytorch/pytorch/issues/43227 
+        padded_data = torch.nn.utils.rnn.pack_padded_sequence(padded_data, lens.cpu())
         hidden_vectors = recurrent_model(padded_data)[0]
         hidden_vectors, _ = torch.nn.utils.rnn.pad_packed_sequence(hidden_vectors)
         # unsort the results at dim=1 and return

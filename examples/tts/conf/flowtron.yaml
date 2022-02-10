@@ -74,9 +74,9 @@ model:
       cmudict_path: "/akshita/flowtron/data/cmudict_dictionary"
       text_cleaners: ["flowtron_cleaners"]
       speaker_ids: null
-      use_attn_prior: false
+      use_attn_prior: true
       attn_prior_threshold: 0.0
-      prior_cache_path: "/attention_prior_cache"
+      prior_cache_path: "/akshita/attention_prior_cache"
       betab_scaling_factor: 1.0
       keep_ambiguous: false 
       seed: {model.seed}
@@ -107,13 +107,13 @@ model:
 
   trainparams:
     ctc_loss_start_iter: 10000
-    batch_size: 2
+    batch_size: 4
     ignore_layers: []
     include_layers: ["speaker", "encoder", "embedding"]
   
 trainer:
-  gpus: 4
-  max_epochs: 1000
+  gpus: 1
+  max_epochs: 10000000
   num_nodes: 1
   accelerator: ddp
   checkpoint_callback: False  # Provided by exp_manager
