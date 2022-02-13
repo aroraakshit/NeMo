@@ -74,7 +74,7 @@ model:
       cmudict_path: "/akshita/flowtron/data/cmudict_dictionary"
       text_cleaners: ["flowtron_cleaners"]
       speaker_ids: null
-      use_attn_prior: true
+      use_attn_prior: false
       attn_prior_threshold: 0.0
       prior_cache_path: "/akshita/attention_prior_cache"
       betab_scaling_factor: 1.0
