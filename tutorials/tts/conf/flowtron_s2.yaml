@@ -16,7 +16,7 @@ model:
   n_speaker_dim: 128
   n_text_dim: 512
   optim_algo: "RAdam"
-  learning_rate: 1e-3
+  learning_rate: 1e-4
   weight_decay: 1e-6
   finetune_layers: []
   seed: 1234
