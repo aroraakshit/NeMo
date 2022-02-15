@@ -398,12 +398,12 @@ class FlowtronModel(SpectrogramGenerator):
             param_group['lr'] = self._cfg.learning_rate
         return optimizer
 
-    @typecheck(
-        input_types={"tokens": NeuralType(('B', 'T'), EmbeddedTextType())},
-        output_types={"spectrogram_pred": NeuralType(('B', 'D', 'T'), MelSpectrogramType())},
-    )
+    # @typecheck(
+    #     input_types={"tokens": NeuralType(('B', 'T'), EmbeddedTextType())},
+    #     output_types={"spectrogram_pred": NeuralType(('B', 'D', 'T'), MelSpectrogramType())},
+    # )
     def generate_spectrogram(self, tokens, **kwargs):
         speaker_vecs = self.speaker_vecs[None]
-        residual = torch.cuda.FloatTensor(1, 80, 400).normal_() * 0.5
+        residual = torch.cuda.FloatTensor(1, 80, kwargs['n_frames']).normal_() * kwargs['sigma']
         spectrogram_pred, _ = self.infer(residual, speaker_vecs, tokens, gate_threshold=0.5)
         return spectrogram_pred
