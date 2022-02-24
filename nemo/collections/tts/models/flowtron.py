@@ -1,5 +1,17 @@
+# Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import cgi
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List
 
@@ -53,7 +65,7 @@ class FlowtronConfig:
     seed: int = MISSING
 
 class FlowtronModel(SpectrogramGenerator):
-    """Flowtron Model that is used to generate mel spectrograms from text"""
+    """Flowtron Model (https://arxiv.org/abs/2005.05957) that is used to generate mel spectrograms from text"""
 
     def __init__(self, cfg: DictConfig, trainer: 'Trainer' = None):
         if isinstance(cfg, dict):
@@ -254,7 +266,7 @@ class FlowtronModel(SpectrogramGenerator):
         This method returns a list of pre-trained model which can be instantiated directly from NVIDIA's NGC cloud.
         Returns:
             List of available pre-trained models.
-        #TODO: this will not work until NGC public URL is fed here. Or we could point the URL to a GCS bucket. 
+        #TODO: this will not work until NGC public URL is ready.
         """
         list_of_models = []
         model = PretrainedModelInfo(
@@ -398,11 +410,8 @@ class FlowtronModel(SpectrogramGenerator):
             param_group['lr'] = self._cfg.learning_rate
         return optimizer
 
-    # @typecheck(
-    #     input_types={"tokens": NeuralType(('B', 'T'), EmbeddedTextType())},
-    #     output_types={"spectrogram_pred": NeuralType(('B', 'D', 'T'), MelSpectrogramType())},
-    # )
-    def generate_spectrogram(self, tokens, **kwargs):
+    # @typecheck(output_types={"spectrogram_pred": NeuralType(('B', 'D', 'T'), MelSpectrogramType())})
+    def generate_spectrogram(self, tokens: 'torch.tensor', **kwargs):
         speaker_vecs = self.speaker_vecs[None]
         residual = torch.cuda.FloatTensor(1, 80, kwargs['n_frames']).normal_() * kwargs['sigma']
         spectrogram_pred, _ = self.infer(residual, speaker_vecs, tokens, gate_threshold=0.5)
